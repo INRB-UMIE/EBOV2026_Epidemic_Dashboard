@@ -40,6 +40,29 @@
     #tracker .country { gap:3px 6px; }
     #info           { max-width:60vw; }
     #legend         { max-width:60vw; }
+    /* Portrait narrow: title spans the top, so push controls / info DOWN
+       below it so they don't sit on top of the title. */
+    #controls       { top:clamp(150px, 28vh, 240px); }
+    #info           { top:clamp(150px, 28vh, 240px); }
+  }
+  /* Landscape phones (short viewports): the @media max-width rule misses these
+     because the width grows when the device rotates, but the height shrinks.
+     Shrink the title panel + tracker so the map area stays usable. */
+  @media (max-height: 500px) {
+    .panel          { font-size:11px; padding:5px 7px; }
+    #title          { padding:4px 8px; }
+    #title h1       { font-size:clamp(14px, 4vh, 18px); margin-bottom:1px; letter-spacing:0.2px; }
+    #title .sub     { font-size:9px; }
+    #title .link-btn { padding:1px 6px; font-size:10px; }
+    #tracker        { margin-top:2px; padding:3px 2px 0; }
+    #tracker .global-title { font-size:9px; margin-bottom:0; }
+    #tracker .global-row { gap:clamp(8px, 3vh, 16px); }
+    #tracker .global-cell .num { font-size:clamp(16px, 4.5vh, 22px); }
+    #tracker .global-cell .sub { font-size:9px; margin-top:0; }
+    #tracker .countries-row { margin-top:3px; font-size:10px; gap:1px; }
+    #info           { max-height:70vh; }
+    #legend         { max-height:60vh; bottom:8px; }
+    #partners       { bottom:8px; }
     /* Force exactly two columns on phones so logos lay out as 2×2 instead of
        3 + 1 (the natural flex-wrap behavior is dominated by INSP's wide
        aspect, which pushes the wrap point to an odd column). Using
