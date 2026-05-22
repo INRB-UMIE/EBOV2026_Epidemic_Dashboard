@@ -1,0 +1,12 @@
+Country ,Province,Health Zone,suspected cases,suspected deaths,confirmed cases,confirmed deaths
+DRC,Ituri,Mongbwalu,317,80,13,NA
+DRC,Ituri,Nyankunde,28,5,5,NA
+DRC,Ituri,Rwmapara,179,44,24,NA
+DRC,Ituri,Bunia,125,31,11,NA
+DRC,Ituri,Bambu,2,0,1,NA
+DRC,Ituri,Samples Without Location,0,0,4,NA
+DRC,North Kivu,Butembo,7,0,1,NA
+DRC,North Kivu,Katwa,13,0,1,NA
+DRC,North Kivu,Goma,0,0,1,NA
+Uganda,Kamapala,Kampala,0,0,2,1
+Total,,,516,131,35,5
