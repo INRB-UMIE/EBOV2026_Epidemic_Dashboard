@@ -62,7 +62,13 @@
     #tracker .countries-row { margin-top:3px; font-size:10px; gap:1px; }
     #info           { max-height:70vh; }
     #legend         { max-height:60vh; bottom:8px; }
-    #partners       { bottom:8px; }
+    /* Landscape phones: tighten the partner strip explicitly so the logos
+       don't fill the corner just because the viewport got wider. */
+    #partners      { bottom:8px; right:6px; padding:2px 3px; gap:2px;
+                      width:auto; max-width:min(38vw, 260px); }
+    #partners a    { flex:0 0 calc(50% - 1px); }
+    #partners img  { max-width:100%; max-height:clamp(18px, 5vh, 28px);
+                      height:auto; width:auto; object-fit:contain; }
     /* Force exactly two columns on phones so logos lay out as 2×2 instead of
        3 + 1 (the natural flex-wrap behavior is dominated by INSP's wide
        aspect, which pushes the wrap point to an odd column). Using
@@ -105,8 +111,8 @@
               max-width:min(60vw, 520px); }
   #partners a { display:inline-flex; align-items:center; transition:opacity .15s ease; }
   #partners a:hover { opacity:0.78; }
-  #partners img { height:clamp(28px, 5vw, 48px); width:auto;
-                  max-width:min(28vw, 160px); display:block; object-fit:contain; }
+  #partners img { height:clamp(24px, 5vmin, 44px); width:auto;
+                  max-width:min(22vmin, 140px); display:block; object-fit:contain; }
   #tracker .countries-row { display:flex; flex-direction:column; align-items:center; gap:3px; margin-top:8px; font-size:clamp(10px, 1.6vw, 11px); color:#ddd; }
   #tracker .country { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 8px; justify-content:center; }
   #tracker .country .name { color:#9fcdfb; font-weight:600; }
