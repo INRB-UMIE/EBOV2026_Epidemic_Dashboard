@@ -36,7 +36,12 @@
     #tracker .global-cell .num { font-size:22px; }
     #info           { max-width:60vw; }
     #legend         { max-width:60vw; }
-    #partners img   { height:32px; }
+    #partners      { max-width:calc(100vw - 24px); padding:6px 8px; gap:6px; }
+  }
+  @media (max-width: 460px) {
+    /* On very narrow screens, force a 2×2 grid so labels stay readable. */
+    #partners      { max-width:calc(100vw - 24px); }
+    #partners img  { max-width:38vw; }
   }
   #title        { top:12px; left:50%; transform:translateX(-50%); text-align:center; min-width:520px; }
   #title .title-row { display:flex; align-items:center; justify-content:center; gap:14px; }
@@ -54,13 +59,19 @@
   #tracker .global-cell.deaths .num { color:#ff4d4d; }
   /* Partner logos strip — bottom-right of the map, white-tile background so
      institutional logos with white backgrounds (JPEGs) read cleanly. */
+  /* Partners strip — bottom-right of the map. flex-wrap + responsive caps
+     keep the four institutional logos legible across phone → desktop widths
+     without overflowing the viewport or colliding with the legend. */
   #partners { position:absolute; bottom:24px; right:12px; z-index:1000;
               background:#f5f5f5; border-radius:8px; padding:8px 10px;
               box-shadow:0 2px 10px rgba(0,0,0,0.4);
-              display:flex; align-items:center; gap:10px; }
+              display:flex; flex-wrap:wrap; align-items:center;
+              justify-content:center; gap:10px;
+              max-width:min(60vw, 520px); }
   #partners a { display:inline-flex; align-items:center; transition:opacity .15s ease; }
   #partners a:hover { opacity:0.78; }
-  #partners img { height:48px; width:auto; display:block; }
+  #partners img { height:clamp(28px, 5vw, 48px); width:auto;
+                  max-width:min(28vw, 160px); display:block; object-fit:contain; }
   #tracker .countries-row { display:flex; flex-direction:column; align-items:center; gap:3px; margin-top:8px; font-size:11px; color:#ddd; }
   #tracker .country { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 8px; justify-content:center; }
   #tracker .country .name { color:#9fcdfb; font-weight:600; }
