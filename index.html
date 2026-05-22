@@ -36,12 +36,15 @@
     #tracker .global-cell .num { font-size:22px; }
     #info           { max-width:60vw; }
     #legend         { max-width:60vw; }
-    #partners      { max-width:calc(100vw - 24px); padding:6px 8px; gap:6px; }
-  }
-  @media (max-width: 460px) {
-    /* On very narrow screens, force a 2×2 grid so labels stay readable. */
-    #partners      { max-width:calc(100vw - 24px); }
-    #partners img  { max-width:38vw; }
+    /* Force exactly two columns on phones so logos lay out as 2×2 instead of
+       3 + 1 (the natural flex-wrap behavior is dominated by INSP's wide
+       aspect, which pushes the wrap point to an odd column). */
+    #partners      { display:grid; grid-template-columns:repeat(2, 1fr);
+                      justify-items:center; max-width:calc(100vw - 24px);
+                      padding:6px 8px; gap:8px 10px; }
+    #partners a    { width:100%; justify-content:center; }
+    #partners img  { max-width:100%; height:auto; width:auto;
+                      max-height:clamp(28px, 7vw, 44px); object-fit:contain; }
   }
   #title        { top:12px; left:50%; transform:translateX(-50%); text-align:center; min-width:520px; }
   #title .title-row { display:flex; align-items:center; justify-content:center; gap:14px; }
