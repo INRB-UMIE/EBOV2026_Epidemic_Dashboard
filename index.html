@@ -43,13 +43,13 @@
        Safari than grid + 1fr, which can collapse when the container has no
        intrinsic width. */
     #partners      { display:flex; flex-wrap:wrap; justify-content:center;
-                      align-items:center; gap:2px;
-                      width:min(calc(100vw - 16px), 180px);
-                      padding:2px; }
+                      align-items:center; gap:1px;
+                      width:min(calc(100vw - 16px), 120px);
+                      padding:1px 2px; }
     #partners a    { flex:0 0 calc(50% - 1px); display:flex;
                       align-items:center; justify-content:center; }
     #partners img  { max-width:100%; height:auto; width:auto;
-                      max-height:clamp(18px, 5vw, 28px); object-fit:contain; }
+                      max-height:clamp(14px, 4vw, 18px); object-fit:contain; }
   }
   #title        { top:12px; left:50%; transform:translateX(-50%); text-align:center; min-width:520px; }
   #title .title-row { display:flex; align-items:center; justify-content:center; gap:14px; }
