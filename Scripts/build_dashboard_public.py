@@ -1148,6 +1148,7 @@ function fmtLegend(v, kind) {
   if (v == null || Number.isNaN(v)) return "—";
   if (typeof v !== "number") return String(v);
   if (kind === "rel") return v.toFixed(2);
+  if (kind === "int") return Math.round(v).toLocaleString();
   return v.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
 }
 
@@ -1178,7 +1179,7 @@ function updateLegend(layer) {
   const ticks = document.getElementById("legend-ticks");
   const lo = currentDomain.min, hi = currentDomain.max;
   const mid = currentDomain.isLog ? Math.sqrt(lo * hi) : (lo + hi) / 2;
-  const fmtKind = layer.id === "cal::true" ? "rel" : null;
+  const fmtKind = layer.id === "cal::true" ? "rel" : "int";
   ticks.innerHTML =
     "<span>" + fmtLegend(lo,  fmtKind) + "</span>" +
     "<span>" + fmtLegend(mid, fmtKind) + "</span>" +
@@ -1218,7 +1219,10 @@ function infoHTML(feature) {
   h += "</table>";
 
   h += "<h4>Health system</h4>";
-  h += "<table><tr><td>facilities</td><td>" + fmt(z.n_health_facilities) + "</td></tr></table>";
+  h += "<table>";
+  h += "<tr><td>facilities</td><td>" + fmt(z.n_health_facilities) + "</td></tr>";
+  h += "<tr><td>PCR testing capacity</td><td>" + fmt(z.n_pcr_tests_target) + "</td></tr>";
+  h += "</table>";
 
   h += "<h4>Refugee/IDP camps</h4>";
   h += "<table>";
