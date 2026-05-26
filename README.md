@@ -14,6 +14,74 @@ This work is led by the Institut National de Recherche Biomédicale (INRB) Kinsh
 - **Refugee / IDP sites**: [OpenStreetMap](https://www.openstreetmap.org/) (via Overpass API)
 - **Flowminder**: [Flowminder](https://www.flowminder.org/) 
 - **Displaced Movement Outputs**: [IOM](https://dtm.iom.int/)
+- **Epidemiological Data**: [INSP](https://insp.cd/category/sitrep/)
+- **health_zone_metadata.csv** Metadata file for dashboard, see below. 
+- **Methods** Methods for dashboard, see below.
+- **ToS** ToS for dashboard, see below. 
+
+## Repository layout relevant for building dashboard
+```
+EBOV2026_Epidemic_Dashboard/
+├── Scripts/
+│   ├── refresh.py                  # end-to-end pipeline orchestrator
+│   ├── fetch_insp_sitrep.py        # downloads + parses a single INSP sitrep PDF
+│   ├── backfill_insp_sitreps.py    # iterates the URL pattern to catch up
+│   ├── merge_sitrep_into_metadata.py # merges new INSP sitrep data into metadata file
+│   └── build_dashboard_public.py   # renders Data/ → output/dashboard.html
+├── Data/
+│   ├── health_zone_metadata.csv    # one row per DRC health zone
+│   ├── DRC Health Zones/<*.shp>    # MoH zones de santé shapefile
+│   ├── Epidemiological Data/
+│   │   ├── YYYY-MM-DD.csv          # one CSV per parsed INSP sitrep
+│   │   ├── pdfs/                   # raw PDFs archived by sitrep number
+│   │   └── latest_sitrep.json      # pointer to the most recent sitrep
+│   ├── Methods/Contributors_Methods_Data_website.docx # website information on contributors, methods, and data. 
+│   ├── ToS/Terms of Use.txt # website information on ToS
+│   ├── Branding/                   # partner logos + urls.txt
+├── output/
+│   └── dashboard.html              # build artefact (self-contained, ~3.6 MB)
+└── index.html                      # publicly served copy
+```
+
+## Setup
+Dependencies: Python 3.10+ with `pandas`, `pypdf`, `python-docx`, `fiona`,
+`shapely`, `numpy`. The `fiona`/`shapely` stack pulls in GDAL, which is
+easiest to install via conda-forge:
+
+```bash
+conda create -n ebov2026 -c conda-forge python=3.12 \
+    pandas pypdf python-docx fiona shapely numpy
+conda activate ebov2026
+```
+
+(pip should work too, but you may need system GDAL headers for `fiona` on macOS/Linux.)
+
+## Building the dashboard
+
+```bash
+# Standard refresh: check for new INSP sitreps, merge, rebuild.
+python Scripts/refresh.py
+
+# Force a rebuild even when no new sitrep is available
+# (useful when health_zone_metadata.csv changed for other reasons).
+python Scripts/refresh.py --force-rebuild
+
+# Skip individual steps:
+python Scripts/refresh.py --skip-fetch    # merge + rebuild only
+python Scripts/refresh.py --skip-rebuild  # fetch + merge only
+```
+
+The pipeline writes the processed CSV + raw PDF into `Data/Epidemiological Data/`,
+updates `Data/health_zone_metadata.csv` in place, and produces a single
+self-contained `output/dashboard.html` that embeds all geometry, per-zone
+aggregates, Methods text, Terms of Use, and partner logos.
+
+`Data/` location can be overridden with the `DATA_ROOT` environment
+variable (useful when testing from a different working directory):
+
+```bash
+DATA_ROOT=/path/to/Data python Scripts/build_dashboard_public.py
+```
 
 ## Citation
 Please cite the original data providers (links above) and this repository if any code or derived data is reused.
