@@ -55,7 +55,6 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-import fiona
 import numpy as np
 import pandas as pd
 from shapely.geometry import mapping, shape
@@ -71,14 +70,18 @@ DATA_ROOT = Path(os.environ.get("DATA_ROOT") or (SCRIPT_DIR.parent / "Data")).re
 OUTPUT_DIR = SCRIPT_DIR.parent / "output"
 OUTPUT_PATH = OUTPUT_DIR / "dashboard.html"
 
+BUILD_DIR = Path(os.environ.get("BUILD_DIR") or
+                 (SCRIPT_DIR.parent.parent / "Ebola_DRC_2026" / "build")).resolve()
+BUILD_GEOJSON    = BUILD_DIR / "drc_health_zones.geojson"
+BUILD_LONG_DIR   = BUILD_DIR / "long"
+EXTERNAL_DATA    = BUILD_DIR.parent / "data"
+
 METADATA_CSV     = DATA_ROOT / "health_zone_metadata.csv"
-ZONES_SHP_DIR    = DATA_ROOT / "DRC Health Zones"
 SIT_REPS_DIR     = DATA_ROOT / "Epidemiological Data"
 METHODS_DOCX     = DATA_ROOT / "Methods" / "Contributors_Methods_Data_website.docx"
 TERMS_TXT        = DATA_ROOT / "ToS" / "Terms of Use.txt"
 BRANDING_DIR     = DATA_ROOT / "Branding"
 BRANDING_URLS    = BRANDING_DIR / "urls.txt"
-REFUGEE_GEOJSON  = DATA_ROOT / "Refugee_IDP sites" / "drc_refugee_sites.geojson"  # optional
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +90,36 @@ REFUGEE_GEOJSON  = DATA_ROOT / "Refugee_IDP sites" / "drc_refugee_sites.geojson"
 
 SIMPLIFY_TOL = 0.001     # ~110 m at the equator; ~10× fewer vertices than raw
 COORD_DECIMALS = 5
-TRAVEL_FROM_ZONE = "Mongbwalu"
+TRAVEL_FROM_ZONE = "Mongbalu"
 ASOF_FALLBACK = ""
 INSP_FALLBACK_URL = "https://insp.cd/"
 LATEST_SITREP_JSON = SIT_REPS_DIR / "latest_sitrep.json"
+
+# Maps metadata CSV names → build GeoJSON nom values where they differ.
+_NAME_TO_NOM = {
+    "Banzow Moke": "Banjow Moke",
+    "Bogosenubea": "Bogosenubia",
+    "Busanga": "Bosanga",
+    "Citenge": "Tshitenge",
+    "Gety": "Gethy",
+    "Gungu (Secteur)": "Gungu",
+    "Idiofa (Secteur)": "Idiofa",
+    "Kabeya Kamwanga": "Kabeya Kamuanga",
+    "Kabondo-Dianda": "Kabondo Dianda",
+    "Kasongo-Lunda": "Kasongo Lunda",
+    "Kiambi": "Kiyambi",
+    "Kimbao": "Kimbau",
+    "Lubunga": "Lubunga (Tshopo)",
+    "Malemba Nkulu": "Malemba",
+    "Mongbwalu": "Mongbalu",
+    "Nia Nia": "Nia-Nia",
+    "Nsona-Pangu": "Nsona-Mpangu",
+    "Nyankunde": "Nyakunde",
+    "Nyirangongo": "Nyiragongo",
+    "Pendjua": "Penjwa",
+    "Yalifafu": "Yalifafo",
+}
+_NOM_TO_NAME = {v: k for k, v in _NAME_TO_NOM.items()}
 
 PARTNER_ORDER = ["INSP.png", "inrb.png", "INOHA.jpeg", "UMIE.jpeg", "africa-cdc.png"]
 
@@ -171,51 +200,22 @@ def _round_coords(geom_dict: dict, ndigits: int) -> dict:
 # geometry: read DRC health-zone polygons, match per-zone metadata rows
 # ---------------------------------------------------------------------------
 
-def _load_shapefile_features() -> dict[str, dict]:
-    shp_paths = list(ZONES_SHP_DIR.glob("*.shp"))
-    if not shp_paths:
-        raise FileNotFoundError(f"no .shp in {ZONES_SHP_DIR}")
-    by_ref: dict[str, dict] = {}
-    by_name: dict[str, str] = {}
-    with fiona.open(str(shp_paths[0])) as src:
-        for feat in src:
-            props = dict(feat["properties"])
-            ref = props.get("Code_DHIS2")
-            nom = props.get("Nom")
-            geom = feat.get("geometry")
-            if geom is None:
-                continue
-            geom = make_valid(shape(geom))
-            if geom.is_empty:
-                continue
-            if ref:
-                by_ref[ref] = {"geom": geom, "props": props}
-                if nom:
-                    by_name.setdefault(_norm(nom), ref)
-    return {"by_ref": by_ref, "by_name": by_name}
-
-
-def load_features(meta: pd.DataFrame) -> tuple[list[dict], dict[str, tuple[float, float]]]:
-    """Match every metadata row to a shapefile polygon (by Code_DHIS2 or Nom)."""
-    idx = _load_shapefile_features()
-    by_ref, by_name = idx["by_ref"], idx["by_name"]
+def load_features_from_geojson() -> tuple[list[dict], dict[str, tuple[float, float]]]:
+    """Load zone polygons from the build GeoJSON, keyed by nom."""
+    with open(BUILD_GEOJSON) as f:
+        raw = json.load(f)
 
     feats: list[dict] = []
     centroids: dict[str, tuple[float, float]] = {}
-    unmatched: list[str] = []
-    for _, row in meta.iterrows():
-        ref = row.get("ref_dhis2")
-        name = row.get("name")
-        if not isinstance(ref, str) or not ref:
+    for feat in raw["features"]:
+        nom = feat["properties"]["nom"]
+        geom = make_valid(shape(feat["geometry"]))
+        if geom.is_empty or geom.geom_type not in {"Polygon", "MultiPolygon"}:
             continue
-        hit = by_ref.get(ref) or by_ref.get(by_name.get(_norm(name)) or "")
-        if hit is None:
-            unmatched.append(f"{name} ({ref})")
-            continue
-        geom = hit["geom"]
+        orig_centroid = geom.centroid
         if SIMPLIFY_TOL > 0:
             geom = geom.simplify(SIMPLIFY_TOL, preserve_topology=True)
-        if geom.is_empty or geom.geom_type not in {"Polygon", "MultiPolygon"}:
+        if geom.is_empty:
             continue
         gdict = mapping(geom)
         if COORD_DECIMALS is not None:
@@ -223,31 +223,34 @@ def load_features(meta: pd.DataFrame) -> tuple[list[dict], dict[str, tuple[float
         feats.append({
             "type": "Feature",
             "geometry": gdict,
-            "properties": {"ref_dhis2": ref, "name": str(name)},
+            "properties": {"nom": nom, "name": nom},
         })
-        c = hit["geom"].centroid
-        centroids[ref] = (float(c.x), float(c.y))
-    if unmatched:
-        print(f"  WARNING: {len(unmatched)} metadata zones had no shapefile match: "
-              f"{unmatched[:5]}")
+        centroids[nom] = (float(orig_centroid.x), float(orig_centroid.y))
     return feats, centroids
+
+
+def _load_build_geojson_properties() -> dict[str, dict]:
+    """Return {nom: properties_dict} from the build GeoJSON."""
+    with open(BUILD_GEOJSON) as f:
+        raw = json.load(f)
+    return {feat["properties"]["nom"]: feat["properties"]
+            for feat in raw["features"]}
 
 
 # ---------------------------------------------------------------------------
 # per-zone payload
 # ---------------------------------------------------------------------------
 
-def load_metadata() -> tuple[pd.DataFrame, dict[str, dict]]:
+def _load_local_csv_fields() -> dict[str, dict]:
+    """Load fields only available in the local metadata CSV (not in the build),
+    keyed by nom (using _NAME_TO_NOM to translate CSV name → build nom)."""
     if not METADATA_CSV.exists():
-        raise FileNotFoundError(METADATA_CSV)
+        print(f"  WARNING: {METADATA_CSV} not found, local-only fields unavailable")
+        return {}
     df = pd.read_csv(METADATA_CSV)
     df = df.dropna(subset=["ref_dhis2"]).copy()
-    df["ref_dhis2"] = df["ref_dhis2"].astype(str)
     df["name"] = df["name"].astype(str)
 
-    # Use the relative_risk column from the CSV when present; if absent, fall
-    # back to deriving it from projected_true_infections so the dashboard still
-    # works on legacy metadata exports.
     if "relative_risk" not in df.columns and "projected_true_infections" in df.columns:
         proj = pd.to_numeric(df["projected_true_infections"], errors="coerce")
         proj_max = proj.max()
@@ -256,43 +259,157 @@ def load_metadata() -> tuple[pd.DataFrame, dict[str, dict]]:
         else:
             df["relative_risk"] = np.nan
 
-    zone_data: dict[str, dict] = {}
     fields_f = [
-        "centroid_lat", "centroid_lon",
-        "population", "population_lower", "population_upper",
+        "population_lower", "population_upper",
         "nearest_refugee_camp_km",
-        "geodesic_to_mongbwalu_km", "travel_time_to_mongbwalu_h",
         "calibration_effective_distance_from_mongbwalu",
         "relative_risk",
     ]
     fields_i = [
-        "n_health_facilities",
         "n_refugee_camps_within_50km", "n_refugee_camps_within_100km",
-        "displaced_in_individuals_12mo", "flowminder_in_mar2026",
-        "suspected_cases", "suspected_deaths",
-        "confirmed_cases", "confirmed_deaths",
         "n_pcr_tests_target",
     ]
+    out: dict[str, dict] = {}
     for _, row in df.iterrows():
-        ref = row["ref_dhis2"]
-        rec = {"name": row["name"]}
+        name = row["name"]
+        nom = _NAME_TO_NOM.get(name, name)
+        rec: dict = {}
         for c in fields_f:
             if c in df.columns:
                 rec[c] = _f(row.get(c))
         for c in fields_i:
             if c in df.columns:
                 rec[c] = _i(row.get(c))
-        zone_data[ref] = rec
-    return df, zone_data
+        out[nom] = rec
+    return out
 
 
-def compute_case_totals(df: pd.DataFrame) -> dict:
-    cols = ["confirmed_cases", "confirmed_deaths", "suspected_cases", "suspected_deaths"]
-    totals = {c: int(df[c].fillna(0).astype(int).sum()) for c in cols if c in df.columns}
-    affected = int(((df.get("confirmed_cases", 0).fillna(0)
-                     + df.get("suspected_cases", 0).fillna(0)) > 0).sum())
-    totals["affected_zones"] = affected
-    return totals
+def _extract_matrix_column(csv_path: Path, target_col: str) -> dict[str, float | None]:
+    """Extract a single named column from a zone-to-zone matrix CSV.
+    Returns {nom: value}."""
+    if not csv_path.exists():
+        print(f"  WARNING: {csv_path} not found")
+        return {}
+    df = pd.read_csv(csv_path)
+    nom_col = "nom" if "nom" in df.columns else df.columns[1]
+    col = None
+    target_dotted = target_col.replace(" ", ".")
+    for c in df.columns:
+        if c == target_col or c == target_dotted:
+            col = c
+            break
+    if col is None:
+        print(f"  WARNING: column {target_col!r} not found in {csv_path.name}")
+        return {}
+    return {str(row[nom_col]): _f(row[col]) for _, row in df.iterrows()}
+
+
+def _extract_matrix_row_sums(csv_path: Path) -> dict[str, float | None]:
+    """Sum each row of a zone-to-zone matrix (excluding the nom column).
+    Returns {nom: row_sum}."""
+    if not csv_path.exists():
+        print(f"  WARNING: {csv_path} not found")
+        return {}
+    df = pd.read_csv(csv_path, index_col=0)
+    nom_col = df.columns[0]
+    numeric = df.iloc[:, 1:].apply(pd.to_numeric, errors="coerce")
+    sums = numeric.sum(axis=1)
+    return {str(df.iloc[i][nom_col]): _f(sums.iloc[i]) for i in range(len(df))}
+
+
+def load_metadata(
+    centroids: dict[str, tuple[float, float]],
+) -> tuple[dict[str, dict], dict]:
+    """Assemble per-zone metadata from build GeoJSON properties, OSRM matrices,
+    IDP/Flowminder matrices, and local CSV fallback fields."""
+    build_props = _load_build_geojson_properties()
+    local_fields = _load_local_csv_fields()
+
+    # OSRM matrices
+    travel_times = _extract_matrix_column(
+        BUILD_LONG_DIR / "osrm__travel_time.csv", "Mongbalu")
+    road_dists = _extract_matrix_column(
+        BUILD_LONG_DIR / "osrm__road_distance.csv", "Mongbalu")
+
+    # IDP and Flowminder matrices (row sums = incoming totals)
+    idp_incoming = _extract_matrix_row_sums(
+        EXTERNAL_DATA / "IDP" / "processed" / "idp__individuals__static.matrix.csv")
+    flowminder_incoming = _extract_matrix_row_sums(
+        EXTERNAL_DATA / "flowminder" / "processed" / "flowminder__inflow__static.matrix.csv")
+
+    zone_data: dict[str, dict] = {}
+    for nom, props in build_props.items():
+        rec: dict = {"name": nom}
+
+        # Centroids
+        if nom in centroids:
+            lon, lat = centroids[nom]
+            rec["centroid_lon"] = lon
+            rec["centroid_lat"] = lat
+
+        # Population (worldpop)
+        wp = props.get("worldpop", {})
+        rec["population"] = _f(wp.get("pop_count", {}).get("pop_count"))
+
+        # Health facilities (GRID3)
+        g3 = props.get("grid3_healthsites", {})
+        rec["n_health_facilities"] = _i(
+            g3.get("healthsite_count", {}).get("healthsite_count"))
+
+        # Epi: prefer INSP sitrep cumulative (more recent) over epi snapshot
+        insp = props.get("insp_sitrep", {})
+        epi = props.get("epi", {}).get("cases", {})
+        rec["confirmed_cases"] = _i(
+            insp.get("cumulative_confirmed_cases", {}).get("cumulative_confirmed_cases")
+        ) or _i(epi.get("confirmed_cases"))
+        rec["confirmed_deaths"] = _i(
+            insp.get("cumulative_confirmed_deaths", {}).get("cumulative_confirmed_deaths")
+        ) or _i(epi.get("confirmed_deaths"))
+        rec["suspected_cases"] = _i(
+            insp.get("cumulative_suspected_cases", {}).get("cumulative_suspected_cases")
+        ) or _i(epi.get("suspected_cases"))
+        rec["suspected_deaths"] = _i(
+            insp.get("cumulative_suspected_deaths", {}).get("cumulative_suspected_deaths")
+        ) or _i(epi.get("suspected_deaths"))
+
+        # Refugee/IDP site count
+        rs = props.get("refugee_sites", {})
+        rec["refugee_site_count"] = _i(
+            rs.get("sites", {}).get("sites"))
+
+        # OSRM (travel time is in minutes in the matrix → convert to hours)
+        tt = travel_times.get(nom)
+        rec["travel_time_to_mongbwalu_h"] = round(tt / 60, 2) if tt else None
+        rec["geodesic_to_mongbwalu_km"] = road_dists.get(nom)
+
+        # IDP / Flowminder
+        rec["displaced_in_individuals_12mo"] = _i(idp_incoming.get(nom))
+        rec["flowminder_in_mar2026"] = _i(flowminder_incoming.get(nom))
+
+        # Local-CSV-only fields
+        local = local_fields.get(nom, {})
+        rec["population_lower"] = local.get("population_lower")
+        rec["population_upper"] = local.get("population_upper")
+        rec["nearest_refugee_camp_km"] = local.get("nearest_refugee_camp_km")
+        rec["n_refugee_camps_within_50km"] = local.get("n_refugee_camps_within_50km")
+        rec["n_refugee_camps_within_100km"] = local.get("n_refugee_camps_within_100km")
+        rec["calibration_effective_distance_from_mongbwalu"] = local.get(
+            "calibration_effective_distance_from_mongbwalu")
+        rec["relative_risk"] = local.get("relative_risk")
+        rec["n_pcr_tests_target"] = local.get("n_pcr_tests_target")
+
+        zone_data[nom] = rec
+
+    # Case totals
+    totals: dict = {}
+    for col in ("confirmed_cases", "confirmed_deaths",
+                "suspected_cases", "suspected_deaths"):
+        totals[col] = sum(int(r.get(col) or 0) for r in zone_data.values())
+    totals["affected_zones"] = sum(
+        1 for r in zone_data.values()
+        if (int(r.get("confirmed_cases") or 0) + int(r.get("suspected_cases") or 0)) > 0)
+
+    return zone_data, totals
 
 
 def compute_global_sitrep_totals() -> dict:
@@ -382,33 +499,30 @@ def compute_global_sitrep_totals() -> dict:
     return out
 
 
-def build_active_case_markers(df: pd.DataFrame,
-                              centroids_by_ref: dict[str, tuple[float, float]]
+def build_active_case_markers(zone_data: dict[str, dict],
+                              centroids: dict[str, tuple[float, float]]
                               ) -> list[dict]:
     """One marker per zone with one or more observed cases, placed at the
-    real shapefile centroid for that zone."""
-    if df.empty:
-        return []
+    real centroid for that zone."""
     out: list[dict] = []
-    for _, row in df.iterrows():
-        ref = row.get("ref_dhis2")
-        if not isinstance(ref, str) or ref not in centroids_by_ref:
+    for nom, rec in zone_data.items():
+        if nom not in centroids:
             continue
-        susp = int(row.get("suspected_cases") or 0)
-        conf = int(row.get("confirmed_cases") or 0)
+        susp = int(rec.get("suspected_cases") or 0)
+        conf = int(rec.get("confirmed_cases") or 0)
         total = susp + conf
         if total <= 0:
             continue
-        lon, lat = centroids_by_ref[ref]
+        lon, lat = centroids[nom]
         out.append({
-            "ref_dhis2": ref,
-            "name": str(row.get("name") or ""),
+            "nom": nom,
+            "name": rec.get("name", nom),
             "lat": lat,
             "lon": lon,
             "confirmed": conf,
             "suspected": susp,
-            "confirmed_deaths": int(row.get("confirmed_deaths") or 0),
-            "suspected_deaths": int(row.get("suspected_deaths") or 0),
+            "confirmed_deaths": int(rec.get("confirmed_deaths") or 0),
+            "suspected_deaths": int(rec.get("suspected_deaths") or 0),
             "total": total,
         })
     return out
@@ -641,9 +755,9 @@ LAYER_DEFS = [
     ("Refugee/IDP camps",      "ref::n100",      "# camps within 100 km",                           "n_refugee_camps_within_100km", "reds",     "linear"),
     ("Incoming Mobility",      "disp::in",       "Incoming displaced persons (12mo)",               "displaced_in_individuals_12mo", "reds",     "log"),
     ("Incoming Mobility",      "flow::in",       "Flowminder incoming travel",                      "flowminder_in_mar2026",         "reds",     "log"),
-    ("Distance from Mongbwalu","d::travel",      "Travel time from Mongbwalu (hours)",              "travel_time_to_mongbwalu_h",                    "plasma_r", "linear"),
-    ("Distance from Mongbwalu","d::geo",         "Geodesic distance from Mongbwalu (km)",           "geodesic_to_mongbwalu_km",                      "plasma_r", "linear"),
-    ("Distance from Mongbwalu","d::eff",         "Effective distance from Mongbwalu",               "calibration_effective_distance_from_mongbwalu", "plasma_r", "linear"),
+    ("Distance from Mongbalu","d::travel",      "Travel time from Mongbalu (hours)",              "travel_time_to_mongbwalu_h",                    "plasma_r", "linear"),
+    ("Distance from Mongbalu","d::geo",         "Road distance from Mongbalu (km)",           "geodesic_to_mongbwalu_km",                      "plasma_r", "linear"),
+    ("Distance from Mongbalu","d::eff",         "Effective distance from Mongbalu",               "calibration_effective_distance_from_mongbwalu", "plasma_r", "linear"),
     ("Health system",          "hf::pcr",        "PCR Testing Capacity",                            "n_pcr_tests_target",                             "viridis", "log"),
 ]
 
@@ -659,7 +773,7 @@ LAYER_SOURCE_TEXT: dict[str, str] = {
     "Health system":             "Source: GRID3 health facilities v8",
     "Refugee/IDP camps":         "Source: OpenStreetMap (amenity=refugee_site), per-zone distance/count",
     "Incoming Mobility":         "Sources: aggregated displacement movement matrices; Flowminder Mar 2026 inflows",
-    "Distance from Mongbwalu":   "Source: OSRM driving table (travel time), great-circle distance, calibrated kernel",
+    "Distance from Mongbalu":   "Source: OSRM driving table (travel time), great-circle distance, calibrated kernel",
 }
 
 
@@ -668,20 +782,19 @@ LAYER_SOURCE_TEXT: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 def build_payload() -> dict:
-    print(f"DATA_ROOT = {DATA_ROOT}")
-    df, zone_data = load_metadata()
-    print(f"loaded {len(df)} zones from {METADATA_CSV.name}")
+    print(f"BUILD_DIR  = {BUILD_DIR}")
+    print(f"DATA_ROOT  = {DATA_ROOT}")
 
-    features, centroids_by_ref = load_features(df)
-    print(f"  matched {len(features)} zone polygons from {ZONES_SHP_DIR.name}")
+    features, centroids_by_nom = load_features_from_geojson()
+    print(f"  loaded {len(features)} zone polygons from {BUILD_GEOJSON.name}")
+
+    zone_data, case_totals = load_metadata(centroids_by_nom)
+    print(f"  assembled metadata for {len(zone_data)} zones")
 
     initial_view = None
-    bunia = df.loc[df["name"].str.lower() == "bunia"]
-    if not bunia.empty:
-        ref = str(bunia.iloc[0]["ref_dhis2"])
-        if ref in centroids_by_ref:
-            lon, lat = centroids_by_ref[ref]
-            initial_view = {"lat": lat, "lon": lon, "zoom": 8}
+    if "Bunia" in centroids_by_nom:
+        lon, lat = centroids_by_nom["Bunia"]
+        initial_view = {"lat": lat, "lon": lon, "zoom": 8}
 
     layers = [
         {"group": group, "id": lid, "label": label, "field": field,
@@ -696,11 +809,11 @@ def build_payload() -> dict:
     print(f"  terms HTML: {len(terms_html)} chars (updated {terms_updated!r})")
     partners = load_partners()
     print(f"  partner logos: {[p['alt'] for p in partners]}")
-    totals = {**compute_case_totals(df), **compute_global_sitrep_totals()}
+    totals = {**case_totals, **compute_global_sitrep_totals()}
     print(f"  case totals: confirmed={totals.get('confirmed_cases', 0)}, "
           f"suspected={totals.get('suspected_cases', 0)}, "
           f"affected zones={totals.get('affected_zones', 0)}")
-    active_case_markers = build_active_case_markers(df, centroids_by_ref)
+    active_case_markers = build_active_case_markers(zone_data, centroids_by_nom)
     print(f"  active-case markers: {len(active_case_markers)} zones")
 
     asof = detect_asof()
@@ -1093,7 +1206,7 @@ function recompute() {
   const positives = [];
   let lo = Infinity, hi = -Infinity;
   for (const feat of PAYLOAD.geometry.features) {
-    const ref = feat.properties.ref_dhis2;
+    const ref = feat.properties.nom;
     const zone = ZONE_DATA[ref];
     if (!zone) continue;
     const v = valueForZone(zone, layer);
@@ -1133,7 +1246,7 @@ function valueToColor(v) {
 }
 
 function styleFn(feature) {
-  const ref = feature.properties.ref_dhis2;
+  const ref = feature.properties.nom;
   const v = currentValues.get(ref);
   const has = v != null && !Number.isNaN(v);
   const isZero = has && (currentDomain.isLog ? v <= 0 : v === 0);
@@ -1192,11 +1305,11 @@ function updateLegend(layer) {
 }
 
 function infoHTML(feature) {
-  const ref = feature.properties.ref_dhis2;
+  const ref = feature.properties.nom;
   const z = ZONE_DATA[ref] || {};
   const name = feature.properties.name || "(unnamed)";
   let h = "<div><strong>" + name + "</strong></div>";
-  h += "<div style='color:#aaa;font-size:11px;margin-bottom:6px'>ref_dhis2: " + (ref || "—") + "</div>";
+  h += "<div style='color:#aaa;font-size:11px;margin-bottom:6px'>" + (ref || "—") + "</div>";
 
   h += "<h4>Observed cases (" + PAYLOAD.asof + ")</h4>";
   h += "<table>";
@@ -1360,7 +1473,7 @@ wireModal("terms-modal", "terms-btn", "terms-close");
 
 // Pre-populate the zone info panel with Mongbwalu.
 (function preloadMongbwalu() {
-  const target = (TRAVEL_FROM || "Mongbwalu").toLowerCase();
+  const target = (TRAVEL_FROM || "Mongbalu").toLowerCase();
   for (const feat of PAYLOAD.geometry.features) {
     if ((feat.properties.name || "").toLowerCase() === target) {
       document.getElementById("info-body").className = "";

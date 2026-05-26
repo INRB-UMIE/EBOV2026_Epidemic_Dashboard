@@ -6,15 +6,6 @@
 This work is led by the Institut National de Santé Publique (INSP) (Pierre Akilimali, Adelard Lofungola) and the Institut National de Recherche Biomédicale (INRB) Kinshasa/One Health Institute for Africa (INOHA) Kinshasa (Dav Ebengo, Placide Mbala-Kingebeni and Tania Bishola) in collaboration with the AfricaCDC and partners across the University of Oxford and Northeastern University; please contact dav.ebengo@umie-inrb.org or pierre.akilimali@insp.cd for further information.
 
 ## Data
-- **Geo-Harmonized Data**: [Global.health](https://github.com/kraemer-lab/Ebola_DRC_2026)
- - **Epidemiological Data**: [World Health Organization](https://iris.who.int/server/api/core/bitstreams/bb1d4668-04e0-4563-b7c4-d1bdefbc9f05/content)
- - **DRC health zones**: [Humanitarian Data Exchange](https://data.humdata.org/dataset/drc-health-data) (MoH zones de santé shapefile)
-- **Population raster**: [GRID3 v4.4 gridded population](https://data.grid3.org/maps/a3db539c0fae4c05aed92ed67e11fe2b/about)
-- **Health facilities**: [GRID3 COD Health Facilities v8.0](https://data.grid3.org/datasets/GRID3::grid3-cod-health-facilities-v8-0/about)
-- **Refugee / IDP sites**: [OpenStreetMap](https://www.openstreetmap.org/) (via Overpass API)
-- **Flowminder**: [Flowminder](https://www.flowminder.org/) 
-- **Displaced Movement Outputs**: [IOM](https://dtm.iom.int/)
-- **Epidemiological Data**: [INSP](https://insp.cd/category/sitrep/)
 - **health_zone_metadata.csv** Metadata file for dashboard, see below. 
 - **Methods** Methods for dashboard, see below.
 - **ToS** ToS for dashboard, see below. 
@@ -30,11 +21,6 @@ EBOV2026_Epidemic_Dashboard/
 │   └── build_dashboard_public.py   # renders Data/ → output/dashboard.html
 ├── Data/
 │   ├── health_zone_metadata.csv    # one row per DRC health zone
-│   ├── DRC Health Zones/<*.shp>    # MoH zones de santé shapefile
-│   ├── Epidemiological Data/
-│   │   ├── YYYY-MM-DD.csv          # one CSV per parsed INSP sitrep
-│   │   ├── pdfs/                   # raw PDFs archived by sitrep number
-│   │   └── latest_sitrep.json      # pointer to the most recent sitrep
 │   ├── Methods/Contributors_Methods_Data_website.docx # website information on contributors, methods, and data. 
 │   ├── ToS/Terms of Use.txt # website information on ToS
 │   ├── Branding/                   # partner logos + urls.txt
