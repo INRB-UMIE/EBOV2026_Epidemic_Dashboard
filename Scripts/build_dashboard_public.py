@@ -163,16 +163,28 @@ def detect_asof() -> str:
 
 
 def latest_insp_url() -> str:
-    """Return the most-recent INSP sitrep page URL written by
-    fetch_insp_sitrep.update_latest_pointer. Falls back to the INSP root
-    if the pointer file is missing or unreadable."""
-    if not LATEST_SITREP_JSON.exists():
-        return INSP_FALLBACK_URL
-    try:
-        url = json.loads(LATEST_SITREP_JSON.read_text()).get("url")
-    except Exception:
-        return INSP_FALLBACK_URL
-    return url if isinstance(url, str) and url else INSP_FALLBACK_URL
+    """Derive the latest INSP sitrep URL from the build's raw PDFs,
+    falling back to local pointer file or INSP root."""
+    # Try to find the highest-numbered sitrep PDF in the build repo
+    raw_dir = EXTERNAL_DATA / "insp_sitrep" / "raw"
+    if raw_dir.exists():
+        nums = []
+        for p in raw_dir.glob("SitRep_MVE_*-*.pdf"):
+            m = re.search(r"SitRep_MVE_(\d+)-(\d+)", p.stem)
+            if m:
+                nums.append((int(m.group(1)), int(m.group(2))))
+        if nums:
+            num, year = max(nums)
+            return f"https://insp.cd/sitrep-mve-n-{num:03d}-{year}/"
+    # Fall back to local pointer file
+    if LATEST_SITREP_JSON.exists():
+        try:
+            url = json.loads(LATEST_SITREP_JSON.read_text()).get("url")
+            if isinstance(url, str) and url:
+                return url
+        except Exception:
+            pass
+    return INSP_FALLBACK_URL
 
 
 _NORM_RE = re.compile(r"[^a-z0-9]+")
