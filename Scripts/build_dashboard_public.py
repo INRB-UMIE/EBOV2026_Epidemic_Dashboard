@@ -882,7 +882,7 @@ HTML_TEMPLATE = r"""<!doctype html>
               box-shadow:0 2px 8px rgba(0,0,0,0.4);
               display:flex; flex-wrap:wrap; align-items:center;
               justify-content:center; gap:2px;
-              max-width:min(60vw, 520px); }
+              max-width:min(80vw, 720px); }
   #partners a { display:inline-flex; align-items:center; transition:opacity .15s ease; }
   #partners a:hover { opacity:0.78; }
   #partners img { height:clamp(24px, 5vmin, 44px); width:auto;
