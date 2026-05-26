@@ -2,3 +2,4 @@ INOHA.jpeg, https://www.inoha.ac.cd/
 inrb.png, https://inrb.net/ 
 INSP.jpeg, https://insp.cd/
 UMIE.jpeg, https://inrb.net/
+africa-cdc.png, https://africacdc.org/

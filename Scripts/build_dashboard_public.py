@@ -92,7 +92,7 @@ ASOF_FALLBACK = ""
 INSP_FALLBACK_URL = "https://insp.cd/"
 LATEST_SITREP_JSON = SIT_REPS_DIR / "latest_sitrep.json"
 
-PARTNER_ORDER = ["inrb.png", "INSP.jpeg", "INOHA.jpeg", "UMIE.jpeg"]
+PARTNER_ORDER = ["inrb.png", "INSP.jpeg", "INOHA.jpeg", "UMIE.jpeg", "africa-cdc.png"]
 
 
 # ---------------------------------------------------------------------------
@@ -876,7 +876,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   .modal .methods-table th { background:#262626; color:#ffd28a; font-weight:600; }
   .modal .methods-table tr:nth-child(even) td { background:#1f1f1f; }
   #partners { position:absolute; bottom:12px; right:8px; z-index:1000;
-              background:#f5f5f5; border-radius:4px; padding:2px 3px;
+              background:#ffffff; border-radius:4px; padding:2px 3px;
               box-shadow:0 2px 8px rgba(0,0,0,0.4);
               display:flex; flex-wrap:wrap; align-items:center;
               justify-content:center; gap:2px;
