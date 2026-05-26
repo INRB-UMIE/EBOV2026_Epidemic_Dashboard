@@ -6,81 +6,73 @@
 This work is led by the Institut National de Santé Publique (INSP) (Pierre Akilimali, Adelard Lofungola) and the Institut National de Recherche Biomédicale (INRB) Kinshasa/One Health Institute for Africa (INOHA) Kinshasa (Dav Ebengo, Placide Mbala-Kingebeni and Tania Bishola) in collaboration with the AfricaCDC and partners across the University of Oxford and Northeastern University; please contact dav.ebengo@umie-inrb.org or pierre.akilimali@insp.cd for further information.
 
 ## Data
-- **Geo-Harmonized Data**: [Global.health](https://github.com/kraemer-lab/Ebola_DRC_2026)
- - **Epidemiological Data**: [World Health Organization](https://iris.who.int/server/api/core/bitstreams/bb1d4668-04e0-4563-b7c4-d1bdefbc9f05/content)
- - **DRC health zones**: [Humanitarian Data Exchange](https://data.humdata.org/dataset/drc-health-data) (MoH zones de santé shapefile)
-- **Population raster**: [GRID3 v4.4 gridded population](https://data.grid3.org/maps/a3db539c0fae4c05aed92ed67e11fe2b/about)
-- **Health facilities**: [GRID3 COD Health Facilities v8.0](https://data.grid3.org/datasets/GRID3::grid3-cod-health-facilities-v8-0/about)
-- **Refugee / IDP sites**: [OpenStreetMap](https://www.openstreetmap.org/) (via Overpass API)
-- **Flowminder**: [Flowminder](https://www.flowminder.org/) 
-- **Displaced Movement Outputs**: [IOM](https://dtm.iom.int/)
-- **Epidemiological Data**: [INSP](https://insp.cd/category/sitrep/)
 - **health_zone_metadata.csv** Metadata file for dashboard, see below. 
 - **Methods** Methods for dashboard, see below.
 - **ToS** ToS for dashboard, see below. 
 
-## Repository layout relevant for building dashboard
+## Repository layout
 ```
 EBOV2026_Epidemic_Dashboard/
 ├── Scripts/
-│   ├── refresh.py                  # end-to-end pipeline orchestrator
-│   ├── fetch_insp_sitrep.py        # downloads + parses a single INSP sitrep PDF
-│   ├── backfill_insp_sitreps.py    # iterates the URL pattern to catch up
-│   ├── merge_sitrep_into_metadata.py # merges new INSP sitrep data into metadata file
-│   └── build_dashboard_public.py   # renders Data/ → output/dashboard.html
+│   └── build_dashboard_public.py   # builds output/dashboard.html
 ├── Data/
-│   ├── health_zone_metadata.csv    # one row per DRC health zone
-│   ├── DRC Health Zones/<*.shp>    # MoH zones de santé shapefile
-│   ├── Epidemiological Data/
-│   │   ├── YYYY-MM-DD.csv          # one CSV per parsed INSP sitrep
-│   │   ├── pdfs/                   # raw PDFs archived by sitrep number
-│   │   └── latest_sitrep.json      # pointer to the most recent sitrep
-│   ├── Methods/Contributors_Methods_Data_website.docx # website information on contributors, methods, and data. 
-│   ├── ToS/Terms of Use.txt # website information on ToS
-│   ├── Branding/                   # partner logos + urls.txt
+│   ├── health_zone_metadata.csv    # fallback fields (relative risk, population bounds, etc.)
+│   ├── Methods/Contributors_Methods_Data_website.docx
+│   ├── ToS/Terms of Use.txt
+│   └── Branding/                   # partner logos + urls.txt
 ├── output/
-│   └── dashboard.html              # build artefact (self-contained, ~3.6 MB)
+│   └── dashboard.html              # build artefact (self-contained, ~4 MB)
 └── index.html                      # publicly served copy
 ```
 
+## Prerequisites
+
+**Required companion repo:** The build script reads geometry, epidemiological
+data, population, health facility, OSRM travel-time, IDP, and Flowminder
+data from the [Ebola_DRC_2026](https://github.com/INRB-UMIE/Ebola_DRC_2026)
+repository. It must be cloned as a sibling directory:
+
+```
+inrb/
+├── Ebola_DRC_2026/          # companion repo (must be built first)
+│   ├── build/
+│   │   ├── drc_health_zones.geojson   # zone polygons + embedded properties
+│   │   └── long/                      # OSRM matrices, etc.
+│   └── data/
+│       ├── IDP/processed/             # displacement matrices
+│       └── flowminder/processed/      # mobility matrices
+└── EBOV2026_Epidemic_Dashboard/       # this repo
+```
+
+Run the Ebola_DRC_2026 build pipeline first so that `build/` is populated.
+
 ## Setup
-Dependencies: Python 3.10+ with `pandas`, `pypdf`, `python-docx`, `fiona`,
-`shapely`, `numpy`. The `fiona`/`shapely` stack pulls in GDAL, which is
-easiest to install via conda-forge:
+
+Dependencies: Python 3.10+ with `pandas`, `python-docx`, `shapely`, `numpy`.
 
 ```bash
 conda create -n ebov2026 -c conda-forge python=3.12 \
-    pandas pypdf python-docx fiona shapely numpy
+    pandas python-docx shapely numpy
 conda activate ebov2026
 ```
-
-(pip should work too, but you may need system GDAL headers for `fiona` on macOS/Linux.)
 
 ## Building the dashboard
 
 ```bash
-# Standard refresh: check for new INSP sitreps, merge, rebuild.
-python Scripts/refresh.py
-
-# Force a rebuild even when no new sitrep is available
-# (useful when health_zone_metadata.csv changed for other reasons).
-python Scripts/refresh.py --force-rebuild
-
-# Skip individual steps:
-python Scripts/refresh.py --skip-fetch    # merge + rebuild only
-python Scripts/refresh.py --skip-rebuild  # fetch + merge only
+python Scripts/build_dashboard_public.py
 ```
 
-The pipeline writes the processed CSV + raw PDF into `Data/Epidemiological Data/`,
-updates `Data/health_zone_metadata.csv` in place, and produces a single
-self-contained `output/dashboard.html` that embeds all geometry, per-zone
-aggregates, Methods text, Terms of Use, and partner logos.
+This produces a single self-contained `output/dashboard.html` that embeds
+all geometry, per-zone aggregates, Methods text, Terms of Use, and partner
+logos.
 
-`Data/` location can be overridden with the `DATA_ROOT` environment
-variable (useful when testing from a different working directory):
+Override default paths with environment variables if the repos are not
+sibling directories:
 
 ```bash
-DATA_ROOT=/path/to/Data python Scripts/build_dashboard_public.py
+BUILD_DIR=/path/to/Ebola_DRC_2026/build \
+DATA_ROOT=/path/to/Data \
+python Scripts/build_dashboard_public.py
 ```
 
 ## Citation
