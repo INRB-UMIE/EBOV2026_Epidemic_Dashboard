@@ -895,7 +895,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 <div id="title" class="panel">
   <h1>DRC Ebola Bundibugyo 2026</h1>
   <div class="sub" id="title-sub"></div>
-  <div class="sub" id="title-disclaimer">Case Data From INSP - All Underly Data Have Been Released  Publicly</div>
+  <div class="sub" id="title-disclaimer">Case Data From INSP - All Underlying Data Have Been Released Publicly</div>
   <div id="tracker"></div>
   <div style="margin-top:4px">
     <button id="methods-btn" class="link-btn" type="button">Contributors, Data, and Methods</button>
