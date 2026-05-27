@@ -263,6 +263,73 @@ def _load_build_geojson_properties() -> dict[str, dict]:
             for feat in raw["features"]}
 
 
+# Tracker / sitrep field name → insp_sitrep block key in drc_health_zones.geojson.
+_NATIONAL_INSP_KEYS = (
+    ("confirmed_cases", "national_cumulative_confirmed_cases"),
+    ("suspected_cases", "national_cumulative_suspected_cases"),
+    ("confirmed_deaths", "national_cumulative_confirmed_deaths"),
+    ("suspected_deaths", "national_cumulative_suspected_deaths"),
+)
+
+
+def _national_totals_from_build_geojson() -> dict | None:
+    """DRC national INSP totals from the build GeoJSON (same shape as sitrep dict)."""
+    # Abort if the build artefact path is missing (no national figures available).
+    if not BUILD_GEOJSON.exists():
+        return None
+    # Open the zone polygon file that also carries insp_sitrep properties.
+    with open(BUILD_GEOJSON) as f:
+        raw = json.load(f)
+    # Pull the Feature array; an empty file cannot supply totals.
+    features = raw.get("features") or []
+    if not features:
+        return None
+    # National metrics are copied onto every zone; any one feature is sufficient.
+    props = features[0].get("properties") or {}
+    # INSP sitrep blocks (zone + national) live under this nested dict.
+    insp = props.get("insp_sitrep") or {}
+    if not isinstance(insp, dict):
+        return None
+    # Will hold snake_case keys used by the tracker (confirmed_cases, etc.).
+    metrics: dict[str, int | None] = {}
+    for dst, insp_key in _NATIONAL_INSP_KEYS:
+        # Each national metric is a small dict: {metric_name: value, _date: ...}.
+        block = insp.get(insp_key)
+        if not isinstance(block, dict):
+            metrics[dst] = None
+            continue
+        # Inner key repeats the block name (same pattern as zone cumulative_*).
+        metrics[dst] = _i(block.get(insp_key))
+    # If every national field is missing, do not pretend we have a sitrep.
+    if not any(v is not None for v in metrics.values()):
+        return None
+    # Coerce None → 0 for arithmetic and JSON output (tracker expects integers).
+    conf = int(metrics.get("confirmed_cases") or 0)
+    susp = int(metrics.get("suspected_cases") or 0)
+    conf_d = int(metrics.get("confirmed_deaths") or 0)
+    susp_d = int(metrics.get("suspected_deaths") or 0)
+    # Single-country row: national_* in GeoJSON are DRC-only aggregates.
+    per_country = [{
+        "country": "DRC",
+        "confirmed_cases": conf,
+        "suspected_cases": susp,
+        "confirmed_deaths": conf_d,
+        "suspected_deaths": susp_d,
+        "total": conf + susp,
+    }]
+    # Match compute_global_sitrep_totals() so build_payload can merge blindly.
+    return {
+        "global_confirmed_cases": conf,
+        "global_suspected_cases": susp,
+        "global_confirmed_deaths": conf_d,
+        "global_suspected_deaths": susp_d,
+        "global_total_cases": conf + susp,
+        "affected_countries": ["DRC"],
+        "affected_country_count": 1,
+        "per_country": per_country,
+    }
+
+
 # ---------------------------------------------------------------------------
 # per-zone payload
 # ---------------------------------------------------------------------------
@@ -442,15 +509,17 @@ def load_metadata(
     return zone_data, totals
 
 
-def compute_global_sitrep_totals() -> dict:
-    """Aggregate confirmed/suspected cases + deaths across all countries from the
-    newest dated sit-rep CSV. Returns per-country breakdown plus global totals.
+def compute_global_sitrep_totals() -> dict | None:
+    """Tracker outbreak totals: sit-rep CSV if present, else GeoJSON national_*.
 
-    When a sit-rep's Total row underreports relative to the sum of per-zone
-    rows (e.g. INSP marks per-zone confirmed_deaths as "ND" and reports the
-    national aggregate only on the Total row), we credit the missing count to
-    the largest country and trust the higher number.
+    Primary source is the newest dated CSV in Data/Epidemiological Data/ (supports
+    multiple countries). When that is unavailable, uses INSP national cumulative
+    fields from drc_health_zones.geojson (DRC only; not summed from zones).
+
+    When a sit-rep's Total row underreports relative to per-country rows, we credit
+    the excess to the largest country (CSV path only).
     """
+    # Template merged at the end of the CSV path; unused on GeoJSON fallback.
     out = {
         "global_confirmed_cases": 0, "global_suspected_cases": 0,
         "global_confirmed_deaths": 0, "global_suspected_deaths": 0,
@@ -458,8 +527,10 @@ def compute_global_sitrep_totals() -> dict:
         "affected_countries": [], "affected_country_count": 0,
         "per_country": [],
     }
+    # No local sit-rep folder → skip CSV and use build GeoJSON national totals.
     if not SIT_REPS_DIR.exists():
-        return None
+        return _national_totals_from_build_geojson()
+    # Collect paths whose filenames parse as YYYY-MM-DD.csv.
     dated = []
     for p in SIT_REPS_DIR.iterdir():
         if not p.is_file() or p.suffix.lower() != ".csv":
@@ -468,8 +539,9 @@ def compute_global_sitrep_totals() -> dict:
             dated.append((datetime.strptime(p.stem, "%Y-%m-%d").date(), p))
         except ValueError:
             continue
+    # Folder exists but has no dated CSVs → national totals from GeoJSON.
     if not dated:
-        return None
+        return _national_totals_from_build_geojson()
     _, path = max(dated)
     sr_all = pd.read_csv(path)
     sr_all.columns = [c.strip().lower() for c in sr_all.columns]
@@ -840,7 +912,9 @@ def build_payload() -> dict:
     print(f"  terms HTML: {len(terms_html)} chars (updated {terms_updated!r})")
     partners = load_partners()
     print(f"  partner logos: {[p['alt'] for p in partners]}")
+    # Tracker totals: CSV → GeoJSON national_* (inside compute_global_sitrep_totals).
     sitrep = compute_global_sitrep_totals()
+    # Last resort only if CSV and GeoJSON national blocks are both unavailable.
     if sitrep is None:
         sitrep = {
             "global_confirmed_cases":  case_totals.get("confirmed_cases", 0),
