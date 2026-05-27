@@ -1,0 +1,6 @@
+# Python 3.10+ — install: pip install -r requirements.txt
+numpy>=1.24
+pandas>=2.0
+PyYAML>=6.0
+python-docx>=1.0
+shapely>=2.0

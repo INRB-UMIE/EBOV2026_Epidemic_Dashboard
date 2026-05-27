@@ -10,6 +10,8 @@
 exclude:
   - refugee_sites
   - cross_border
+  - insp_sitrep
+  - gdp_pc
   # - healthsites_io                  # entire group
   # - cross_border__poe_passengers__n_poes   # single leaf
 

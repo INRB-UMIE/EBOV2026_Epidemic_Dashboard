@@ -15,6 +15,8 @@ This work is led by the Institut National de Santé Publique (INSP) (Pierre Akil
 EBOV2026_Epidemic_Dashboard/
 ├── Scripts/
 │   └── build_dashboard_public.py   # builds output/dashboard.html
+├── layer_config.yaml               # map layer exclusions, labels, palettes (requires PyYAML)
+├── requirements.txt                # Python dependencies for the build script
 ├── Data/
 │   ├── health_zone_metadata.csv    # fallback fields (relative risk, population bounds, etc.)
 │   ├── Methods/Contributors_Methods_Data_website.docx
@@ -48,11 +50,22 @@ Run the Ebola_DRC_2026 build pipeline first so that `build/` is populated.
 
 ## Setup
 
-Dependencies: Python 3.10+ with `pandas`, `python-docx`, `shapely`, `numpy`.
+Dependencies: Python 3.10+ with `pandas`, `python-docx`, `shapely`, `numpy`, and
+`PyYAML` (reads `layer_config.yaml` for map layer exclusions and styling).
+
+**pip (venv or existing Python):**
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+**conda:**
 
 ```bash
 conda create -n ebov2026 -c conda-forge python=3.12 \
-    pandas python-docx shapely numpy
+    pandas python-docx shapely numpy pyyaml
 conda activate ebov2026
 ```
 
