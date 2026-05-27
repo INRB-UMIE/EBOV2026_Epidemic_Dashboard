@@ -353,15 +353,9 @@ def _load_local_csv_fields() -> dict[str, dict]:
             df["relative_risk"] = np.nan
 
     fields_f = [
-        "population_lower", "population_upper",
-        "nearest_refugee_camp_km",
-        "calibration_effective_distance_from_mongbwalu",
         "relative_risk",
     ]
-    fields_i = [
-        "n_refugee_camps_within_50km", "n_refugee_camps_within_100km",
-        "n_pcr_tests_target",
-    ]
+    fields_i: list[str] = []
     out: dict[str, dict] = {}
     for _, row in df.iterrows():
         name = row["name"]
@@ -416,9 +410,10 @@ def _extract_matrix_row_sums(csv_path: Path) -> dict[str, float | None]:
 
 def load_metadata(
     centroids: dict[str, tuple[float, float]],
+    field_paths: dict[str, list[str]],
 ) -> tuple[dict[str, dict], dict]:
-    """Assemble per-zone metadata from build GeoJSON properties, OSRM matrices,
-    IDP/Flowminder matrices, and local CSV fallback fields."""
+    """Assemble per-zone metadata from build GeoJSON properties (auto-discovered),
+    OSRM matrices, IDP/Flowminder matrices, and local CSV fallback fields."""
     build_props = _load_build_geojson_properties()
     local_fields = _load_local_csv_fields()
 
@@ -444,16 +439,10 @@ def load_metadata(
             rec["centroid_lon"] = lon
             rec["centroid_lat"] = lat
 
-        # Population (worldpop)
-        wp = props.get("worldpop", {})
-        rec["population"] = _f(wp.get("pop_count", {}).get("pop_count"))
+        # Auto-discovered GeoJSON fields
+        rec.update(extract_geojson_fields(props, field_paths))
 
-        # Health facilities (GRID3)
-        g3 = props.get("grid3_healthsites", {})
-        rec["n_health_facilities"] = _i(
-            g3.get("healthsite_count", {}).get("healthsite_count"))
-
-        # Epi: prefer INSP sitrep cumulative (more recent) over epi snapshot.
+        # Epi: prefer INSP sitrep cumulative (more recent) over WHO epi snapshot.
         # Use explicit None checks — `or` would treat 0 as falsy.
         insp = props.get("insp_sitrep", {})
         epi = props.get("epi", {}).get("cases", {})
@@ -469,11 +458,6 @@ def load_metadata(
             rec[dst] = v
         rec["total_cases"] = (rec.get("confirmed_cases") or 0) + (rec.get("suspected_cases") or 0)
 
-        # Refugee/IDP site count
-        rs = props.get("refugee_sites", {})
-        rec["refugee_site_count"] = _i(
-            rs.get("sites", {}).get("sites"))
-
         # OSRM (travel time is in minutes in the matrix → convert to hours)
         tt = travel_times.get(nom)
         rec["travel_time_to_mongbwalu_h"] = round(tt / 60, 2) if tt else None
@@ -485,15 +469,7 @@ def load_metadata(
 
         # Local-CSV-only fields
         local = local_fields.get(nom, {})
-        rec["population_lower"] = local.get("population_lower")
-        rec["population_upper"] = local.get("population_upper")
-        rec["nearest_refugee_camp_km"] = local.get("nearest_refugee_camp_km")
-        rec["n_refugee_camps_within_50km"] = local.get("n_refugee_camps_within_50km")
-        rec["n_refugee_camps_within_100km"] = local.get("n_refugee_camps_within_100km")
-        rec["calibration_effective_distance_from_mongbwalu"] = local.get(
-            "calibration_effective_distance_from_mongbwalu")
         rec["relative_risk"] = local.get("relative_risk")
-        rec["n_pcr_tests_target"] = local.get("n_pcr_tests_target")
 
         zone_data[nom] = rec
 
@@ -838,46 +814,179 @@ def load_partners() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# layers
+# layer auto-discovery from GeoJSON properties
 # ---------------------------------------------------------------------------
 
-LAYER_DEFS = [
-    # (group, layer_id, label, csv_col, palette, scale)
-    ("Observed (epi update)",  "obs::total",     "Total cases (confirmed + suspected)",              "total_cases",      "reds",     "log"),
-    ("Observed (epi update)",  "obs::confirmed", "Confirmed cases",                                 "confirmed_cases",  "reds",     "log"),
-    ("Observed (epi update)",  "obs::suspected", "Suspected cases",                                 "suspected_cases",  "reds",     "log"),
-    ("Observed (epi update)",  "obs::conf_d",    "Confirmed deaths",                                "confirmed_deaths", "reds",     "log"),
-    ("Observed (epi update)",  "obs::susp_d",    "Suspected deaths",                                "suspected_deaths", "reds",     "log"),
-    ("Modeled projection",     "cal::true",      "Relative risk",                                   "relative_risk",    "viridis",  "log"),
-    ("Population",             "pop::point",     "Population (point estimate)",                     "population",       "viridis",  "log"),
-    ("Population",             "pop::lower",     "Population (lower bound)",                        "population_lower", "viridis",  "log"),
-    ("Population",             "pop::upper",     "Population (upper bound)",                        "population_upper", "viridis",  "log"),
-    ("Health system",          "hf::count",      "Health facilities (count)",                       "n_health_facilities",          "viridis", "log"),
-    ("Refugee/IDP camps",      "ref::nearest",   "Distance to nearest camp (km)",                   "nearest_refugee_camp_km",      "plasma_r", "log"),
-    ("Refugee/IDP camps",      "ref::n50",       "# camps within 50 km",                            "n_refugee_camps_within_50km",  "reds",     "linear"),
-    ("Refugee/IDP camps",      "ref::n100",      "# camps within 100 km",                           "n_refugee_camps_within_100km", "reds",     "linear"),
-    ("Incoming Mobility",      "disp::in",       "Incoming displaced persons (12mo)",               "displaced_in_individuals_12mo", "reds",     "log"),
-    ("Incoming Mobility",      "flow::in",       "Flowminder incoming travel",                      "flowminder_in_mar2026",         "reds",     "log"),
-    ("Distance from Mongbalu","d::travel",      "Travel time from Mongbalu (hours)",              "travel_time_to_mongbwalu_h",                    "plasma_r", "linear"),
-    ("Distance from Mongbalu","d::geo",         "Road distance from Mongbalu (km)",           "geodesic_to_mongbwalu_km",                      "plasma_r", "linear"),
-    ("Distance from Mongbalu","d::eff",         "Effective distance from Mongbalu",               "calibration_effective_distance_from_mongbwalu", "plasma_r", "linear"),
-    ("Health system",          "hf::pcr",        "PCR Testing Capacity",                            "n_pcr_tests_target",                             "viridis", "log"),
+# Keys in GeoJSON properties that are metadata, not data layers.
+_SKIP_PROPERTY_KEYS = {"nom", "zscode", "province"}
+
+# Leaf values that are non-numeric strings to treat as missing.
+_NON_NUMERIC_STRINGS = {"ND", "NA", ""}
+
+# Leaf keys that are always excluded (non-numeric identifiers).
+_EXCLUDE_LEAVES = {"poe_names"}
+
+LAYER_CONFIG_YAML = DATA_ROOT / "layer_config.yaml"
+
+
+def _load_layer_config() -> dict:
+    """Load layer_config.yaml. Returns empty-ish defaults if missing."""
+    if not LAYER_CONFIG_YAML.exists():
+        print(f"  WARNING: {LAYER_CONFIG_YAML} not found, using defaults")
+        return {}
+    try:
+        import yaml
+    except ImportError:
+        print("  WARNING: PyYAML not installed, layer_config.yaml ignored")
+        return {}
+    with open(LAYER_CONFIG_YAML) as f:
+        return yaml.safe_load(f) or {}
+
+
+def _prettify_label(s: str) -> str:
+    """Turn a snake_case key into a human-readable label."""
+    return s.replace("_", " ").strip().capitalize()
+
+
+def discover_geojson_layers(
+    geojson_path: Path,
+) -> tuple[list[dict], dict[str, list[str]]]:
+    """Scan a GeoJSON file and return (layer_defs, field_paths).
+
+    layer_defs: list of {"group", "id", "label", "field", "palette", "scale"}
+    field_paths: {flat_field_name: [group_key, metric_key, leaf_key]} mapping
+                 so load_metadata can extract values generically.
+
+    Reads Data/layer_config.yaml for exclusions, group display names,
+    palettes, scales, and ordering.
+    """
+    cfg = _load_layer_config()
+    excludes = set(cfg.get("exclude", []) or [])
+    group_cfg = cfg.get("groups", {}) or {}
+    group_order = cfg.get("group_order", []) or []
+
+    with open(geojson_path) as f:
+        raw = json.load(f)
+
+    # Pass 1: discover all group.metric.leaf paths with at least one numeric value
+    numeric_paths: dict[str, tuple[str, str, str]] = {}
+    for feat in raw["features"]:
+        props = feat["properties"]
+        for gkey, gval in props.items():
+            if gkey in _SKIP_PROPERTY_KEYS or not isinstance(gval, dict):
+                continue
+            if gkey in excludes:
+                continue
+            for mkey, mval in gval.items():
+                if not isinstance(mval, dict):
+                    continue
+                metric_key = f"{gkey}__{mkey}"
+                if metric_key in excludes:
+                    continue
+                for lkey, lval in mval.items():
+                    if lkey == "_date" or lkey in _EXCLUDE_LEAVES:
+                        continue
+                    flat = f"{gkey}__{mkey}__{lkey}"
+                    if flat in excludes:
+                        continue
+                    if flat in numeric_paths:
+                        continue
+                    if isinstance(lval, (int, float)):
+                        numeric_paths[flat] = (gkey, mkey, lkey)
+                    elif isinstance(lval, str) and lval not in _NON_NUMERIC_STRINGS:
+                        try:
+                            float(lval)
+                            numeric_paths[flat] = (gkey, mkey, lkey)
+                        except ValueError:
+                            pass
+
+    # Pass 2: organise into groups, build layer defs
+    groups: dict[str, list[tuple[str, str, str, str]]] = {}
+    for flat, (gkey, mkey, lkey) in numeric_paths.items():
+        label = _prettify_label(lkey)
+        groups.setdefault(gkey, []).append((flat, mkey, lkey, label))
+    for g in groups:
+        groups[g].sort(key=lambda t: t[3])
+
+    # Order groups
+    ordered_groups: list[str] = []
+    for g in group_order:
+        if g in groups:
+            ordered_groups.append(g)
+    for g in sorted(groups):
+        if g not in ordered_groups:
+            ordered_groups.append(g)
+
+    layer_defs: list[dict] = []
+    field_paths: dict[str, list[str]] = {}
+    for gkey in ordered_groups:
+        gcfg = group_cfg.get(gkey, {}) or {}
+        group_name = gcfg.get("label", gkey.replace("_", " ").title())
+        palette = gcfg.get("palette", "viridis")
+        scale = gcfg.get("scale", "log")
+        legend_round = gcfg.get("legend_round", "int")
+        for flat, mkey, lkey, label in groups[gkey]:
+            layer_id = f"{gkey}::{mkey}"
+            if lkey != mkey:
+                layer_id = f"{gkey}::{mkey}::{lkey}"
+            layer_defs.append({
+                "group": group_name,
+                "id": layer_id,
+                "label": label,
+                "field": flat,
+                "palette": palette,
+                "scale": scale,
+                "source": "",
+                "legend_round": legend_round,
+            })
+            field_paths[flat] = [gkey, mkey, lkey]
+
+    return layer_defs, field_paths
+
+
+def extract_geojson_fields(
+    props: dict,
+    field_paths: dict[str, list[str]],
+) -> dict[str, float | int | None]:
+    """Given a single feature's properties and the field_paths mapping,
+    extract all discovered numeric values into a flat dict."""
+    rec: dict[str, float | int | None] = {}
+    for flat, (gkey, mkey, lkey) in field_paths.items():
+        raw_val = props.get(gkey, {}).get(mkey, {}).get(lkey)
+        if isinstance(raw_val, str):
+            if raw_val in _NON_NUMERIC_STRINGS:
+                rec[flat] = None
+                continue
+            try:
+                raw_val = float(raw_val)
+            except ValueError:
+                rec[flat] = None
+                continue
+        rec[flat] = _f(raw_val)
+    return rec
+
+
+# ---------------------------------------------------------------------------
+# extra (non-GeoJSON) layers: matrices, local CSV, computed fields
+# ---------------------------------------------------------------------------
+
+EXTRA_LAYER_DEFS = [
+    # (group, layer_id, label, field, palette, scale, legend_round)
+    ("Observed (epi update)", "obs::total",     "Total cases (confirmed + suspected)", "total_cases",      "reds", "log", "int"),
+    ("Observed (epi update)", "obs::confirmed", "Confirmed cases",                     "confirmed_cases",  "reds", "log", "int"),
+    ("Observed (epi update)", "obs::suspected", "Suspected cases",                     "suspected_cases",  "reds", "log", "int"),
+    ("Observed (epi update)", "obs::conf_d",    "Confirmed deaths",                    "confirmed_deaths", "reds", "log", "int"),
+    ("Observed (epi update)", "obs::susp_d",    "Suspected deaths",                    "suspected_deaths", "reds", "log", "int"),
+    ("Modeled projection",    "cal::true",      "Relative risk",                       "relative_risk",    "viridis", "log", 2),
+    ("Incoming Mobility",     "disp::in",       "Incoming displaced persons (12mo)",   "displaced_in_individuals_12mo", "reds", "log", "int"),
+    ("Incoming Mobility",     "flow::in",       "Flowminder incoming travel",          "flowminder_in_mar2026",         "reds", "log", "int"),
+    ("Distance from Mongbalu","d::travel",      "Travel time from Mongbalu (hours)",   "travel_time_to_mongbwalu_h",    "plasma_r", "linear", 1),
+    ("Distance from Mongbalu","d::geo",         "Road distance from Mongbalu (km)",    "geodesic_to_mongbwalu_km",      "plasma_r", "linear", "int"),
 ]
 
-# Relative risk layer is masked below this threshold (rendered as "no data").
 PROJECTION_MASK_LAYERS = {"cal::true"}
 PROJECTION_MASK_FIELD = "relative_risk"
 PROJECTION_MASK_MIN = 0.005
-
-LAYER_SOURCE_TEXT: dict[str, str] = {
-    "Observed (epi update)":     "",
-    "Modeled projection":        "",
-    "Population":                "Source: GRID3 v4.4 gridded population, zonal sums",
-    "Health system":             "Source: GRID3 health facilities v8",
-    "Refugee/IDP camps":         "Source: OpenStreetMap (amenity=refugee_site), per-zone distance/count",
-    "Incoming Mobility":         "Sources: aggregated displacement movement matrices; Flowminder Mar 2026 inflows",
-    "Distance from Mongbalu":   "Source: OSRM driving table (travel time), great-circle distance, calibrated kernel",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -891,7 +1000,11 @@ def build_payload() -> dict:
     features, centroids_by_nom = load_features_from_geojson()
     print(f"  loaded {len(features)} zone polygons from {BUILD_GEOJSON.name}")
 
-    zone_data, case_totals = load_metadata(centroids_by_nom)
+    # Auto-discover layers from GeoJSON properties
+    discovered_layers, field_paths = discover_geojson_layers(BUILD_GEOJSON)
+    print(f"  auto-discovered {len(discovered_layers)} layers from GeoJSON")
+
+    zone_data, case_totals = load_metadata(centroids_by_nom, field_paths)
     print(f"  assembled metadata for {len(zone_data)} zones")
 
     initial_view = None
@@ -899,12 +1012,15 @@ def build_payload() -> dict:
         lon, lat = centroids_by_nom["Bunia"]
         initial_view = {"lat": lat, "lon": lon, "zoom": 8}
 
-    layers = [
+    # Extra layers (computed fields, matrices, local CSV) go first,
+    # then auto-discovered GeoJSON layers.
+    extra_layers = [
         {"group": group, "id": lid, "label": label, "field": field,
-         "palette": palette, "scale": scale,
-         "source": LAYER_SOURCE_TEXT.get(group, "")}
-        for (group, lid, label, field, palette, scale) in LAYER_DEFS
+         "palette": palette, "scale": scale, "source": "",
+         "legend_round": legend_round}
+        for (group, lid, label, field, palette, scale, legend_round) in EXTRA_LAYER_DEFS
     ]
+    layers = extra_layers + discovered_layers
 
     methods_html = load_methods_html()
     print(f"  methods HTML: {len(methods_html)} chars")
@@ -1383,12 +1499,13 @@ function styleFn(feature) {
   };
 }
 
-function fmtLegend(v, kind) {
+function fmtLegend(v, round) {
   if (v == null || Number.isNaN(v)) return "—";
   if (typeof v !== "number") return String(v);
-  if (kind === "rel") return v.toFixed(2);
-  if (kind === "int") return Math.round(v).toLocaleString();
-  return v.toLocaleString(undefined, {minimumFractionDigits: 1, maximumFractionDigits: 1});
+  if (round === "int" || round == null) return Math.round(v).toLocaleString();
+  var d = Number(round);
+  if (!isFinite(d)) return Math.round(v).toLocaleString();
+  return v.toLocaleString(undefined, {minimumFractionDigits: d, maximumFractionDigits: d});
 }
 
 function fmt(v, kind) {
@@ -1418,11 +1535,11 @@ function updateLegend(layer) {
   const ticks = document.getElementById("legend-ticks");
   const lo = currentDomain.min, hi = currentDomain.max;
   const mid = currentDomain.isLog ? Math.sqrt(lo * hi) : (lo + hi) / 2;
-  const fmtKind = layer.id === "cal::true" ? "rel" : "int";
+  var lr = layer.legend_round != null ? layer.legend_round : "int";
   ticks.innerHTML =
-    "<span>" + fmtLegend(lo,  fmtKind) + "</span>" +
-    "<span>" + fmtLegend(mid, fmtKind) + "</span>" +
-    "<span>" + fmtLegend(hi,  fmtKind) + "</span>";
+    "<span>" + fmtLegend(lo,  lr) + "</span>" +
+    "<span>" + fmtLegend(mid, lr) + "</span>" +
+    "<span>" + fmtLegend(hi,  lr) + "</span>";
   document.getElementById("legend-scale").textContent =
     currentDomain.isLog ? "(log scale)" : "(linear scale)";
   document.getElementById("legend-gray").innerHTML =
@@ -1451,26 +1568,6 @@ function infoHTML(feature) {
   h += "<tr><td>relative risk</td><td>" + fmt(z.relative_risk, "rel") + "</td></tr>";
   h += "</table>";
 
-  h += "<h4>Population</h4>";
-  h += "<table>";
-  h += "<tr><td>point est.</td><td>" + fmt(z.population) + "</td></tr>";
-  h += "<tr><td>lower</td><td>" + fmt(z.population_lower) + "</td></tr>";
-  h += "<tr><td>upper</td><td>" + fmt(z.population_upper) + "</td></tr>";
-  h += "</table>";
-
-  h += "<h4>Health system</h4>";
-  h += "<table>";
-  h += "<tr><td>facilities</td><td>" + fmt(z.n_health_facilities) + "</td></tr>";
-  h += "<tr><td>PCR testing capacity</td><td>" + fmt(z.n_pcr_tests_target) + "</td></tr>";
-  h += "</table>";
-
-  h += "<h4>Refugee/IDP camps</h4>";
-  h += "<table>";
-  h += "<tr><td>nearest (km)</td><td>" + fmt(z.nearest_refugee_camp_km) + "</td></tr>";
-  h += "<tr><td>within 50 km</td><td>" + fmt(z.n_refugee_camps_within_50km) + "</td></tr>";
-  h += "<tr><td>within 100 km</td><td>" + fmt(z.n_refugee_camps_within_100km) + "</td></tr>";
-  h += "</table>";
-
   h += "<h4>Incoming Mobility</h4>";
   h += "<table>";
   h += "<tr><td>displaced persons (12mo)</td><td>" + fmt(z.displaced_in_individuals_12mo) + "</td></tr>";
@@ -1480,8 +1577,7 @@ function infoHTML(feature) {
   h += "<h4>Distance from " + TRAVEL_FROM + "</h4>";
   h += "<table>";
   h += "<tr><td>travel time (h)</td><td>" + fmt(z.travel_time_to_mongbwalu_h) + "</td></tr>";
-  h += "<tr><td>geodesic (km)</td><td>" + fmt(z.geodesic_to_mongbwalu_km) + "</td></tr>";
-  h += "<tr><td>effective</td><td>" + fmt(z.calibration_effective_distance_from_mongbwalu) + "</td></tr>";
+  h += "<tr><td>road distance (km)</td><td>" + fmt(z.geodesic_to_mongbwalu_km) + "</td></tr>";
   h += "</table>";
   return h;
 }
