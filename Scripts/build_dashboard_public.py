@@ -1523,7 +1523,7 @@ document.getElementById("title-sub").innerHTML =
   const icReportUrl = "https://www.imperial.ac.uk/media/imperial-college/medicine/mrc-gida/Report-ebola-update-20-05-2026.pdf";
   const tooltip = "Based on data up to " + date +
     ", the true outbreak size is estimated between " + lo +
-    " and " + hi + " cases (See <a href='" + icReportUrl +
+    " and " + hi + " cases (Depending on assumptions underpinning outbreak severity and growth - see <a href='" + icReportUrl +
     "' target='_blank' rel='noopener'>this report</a> for more details).";
   root.innerHTML =
     "<span class='note-wrap'>" +
