@@ -1,0 +1,113 @@
+# Build output/dashboard.html and sync index.html for GitHub Pages.
+# Triggered manually, on dashboard pushes, or via repository_dispatch from Ebola_DRC_2026.
+
+name: Build dashboard
+
+on:
+  push:
+    branches:
+      - main
+      - automate_dashboard_deployment
+    paths:
+      - "Scripts/**"
+      - "Data/**"
+      - "layer_config.yaml"
+      - "requirements.txt"
+      - ".github/workflows/build-dashboard.yml"
+  workflow_dispatch:
+    inputs:
+      data_repo_ref:
+        description: "Ebola_DRC_2026 git ref (branch, tag, or SHA)"
+        required: false
+        default: "automate_dashboard_deployment"
+  repository_dispatch:
+    types: [data-updated]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-dashboard-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DATA_REPO: INRB-UMIE/Ebola_DRC_2026
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve refs
+        id: refs
+        run: |
+          set -euo pipefail
+          DASH_REF="${{ github.ref_name }}"
+          DATA_REF="automate_dashboard_deployment"
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            if [ -n "${{ github.event.client_payload.dashboard_branch }}" ]; then
+              DASH_REF="${{ github.event.client_payload.dashboard_branch }}"
+            fi
+            if [ -n "${{ github.event.client_payload.data_ref }}" ]; then
+              DATA_REF="${{ github.event.client_payload.data_ref }}"
+            elif [ -n "${{ github.event.client_payload.sha }}" ]; then
+              DATA_REF="${{ github.event.client_payload.sha }}"
+            fi
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            DATA_REF="${{ inputs.data_repo_ref }}"
+          fi
+          echo "dashboard_ref=${DASH_REF}" >> "$GITHUB_OUTPUT"
+          echo "data_ref=${DATA_REF}" >> "$GITHUB_OUTPUT"
+          echo "Dashboard branch: ${DASH_REF}"
+          echo "Data repo ref: ${DATA_REF}"
+
+      - name: Checkout dashboard
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.refs.outputs.dashboard_ref }}
+          lfs: true
+          path: dashboard
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout data repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DATA_REPO }}
+          ref: ${{ steps.refs.outputs.data_ref }}
+          lfs: true
+          path: Ebola_DRC_2026
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: dashboard/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r dashboard/requirements.txt
+
+      - name: Build dashboard HTML
+        working-directory: dashboard
+        env:
+          BUILD_DIR: ${{ github.workspace }}/Ebola_DRC_2026/build
+          DATA_ROOT: ${{ github.workspace }}/dashboard/Data
+        run: |
+          set -euo pipefail
+          python Scripts/build_dashboard_public.py
+          cp output/dashboard.html index.html
+
+      - name: Commit and push
+        working-directory: dashboard
+        env:
+          DATA_REF: ${{ steps.refs.outputs.data_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add output/dashboard.html index.html
+          if git diff --cached --quiet; then
+            echo "No HTML changes to commit."
+            exit 0
+          fi
+          git commit -m "CI: rebuild dashboard from ${DATA_REPO}@${DATA_REF}"
+          git push origin "HEAD:${{ steps.refs.outputs.dashboard_ref }}"
