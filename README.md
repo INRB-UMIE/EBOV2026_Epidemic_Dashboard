@@ -88,6 +88,24 @@ DATA_ROOT=/path/to/Data \
 python Scripts/build_dashboard_public.py
 ```
 
+Copy the build to the site entry point before deploying to GitHub Pages:
+
+```bash
+cp output/dashboard.html index.html
+```
+
+## Automated rebuild (GitHub Actions)
+
+Workflow [`.github/workflows/build-dashboard.yml`](.github/workflows/build-dashboard.yml) checks out this repo and [`Ebola_DRC_2026`](https://github.com/INRB-UMIE/Ebola_DRC_2026), runs the build, and commits `output/dashboard.html` and `index.html` back to the branch that triggered the run.
+
+**Test branch:** `automate_dashboard_deployment` (also `main` for production).
+
+**Run manually:** Actions → *Build dashboard* → *Run workflow* → set `data_repo_ref` (default `automate_dashboard_deployment`).
+
+**Triggered from the data repo:** after a successful release on `main`, or via [`trigger-dashboard-rebuild`](https://github.com/INRB-UMIE/Ebola_DRC_2026/blob/main/.github/workflows/trigger-dashboard-rebuild.yml) on the data repo.
+
+**Secret (data repo only):** add `DASHBOARD_DISPATCH_TOKEN` — a fine-grained PAT with **contents: write** on `EBOV2026_Epidemic_Dashboard`. Without it, dispatch steps warn and skip (local/manual builds still work).
+
 ## Citation
 Please cite the original data providers (links above) and this repository if any code or derived data is reused.
 
