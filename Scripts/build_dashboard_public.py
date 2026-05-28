@@ -77,6 +77,7 @@ BUILD_LONG_DIR   = BUILD_DIR / "long"
 EXTERNAL_DATA    = BUILD_DIR.parent / "data"
 
 METADATA_CSV     = DATA_ROOT / "health_zone_metadata.csv"
+IC_MODEL_CSV     = DATA_ROOT / "ic_model_estimates.csv"
 SIT_REPS_DIR     = DATA_ROOT / "Epidemiological Data"
 METHODS_DOCX     = DATA_ROOT / "Methods" / "Contributors_Methods_Data_website.docx"
 TERMS_TXT        = DATA_ROOT / "ToS" / "Terms of Use.txt"
@@ -328,6 +329,97 @@ def _national_totals_from_build_geojson() -> dict | None:
         "affected_country_count": 1,
         "per_country": per_country,
     }
+
+
+# ---------------------------------------------------------------------------
+# Imperial College model estimates (separate from INSP sitreps)
+# ---------------------------------------------------------------------------
+
+_IC_MODEL_DEFAULTS = {
+    "ic_model_date": None,
+    "ic_model_lowerbound": None,
+    "ic_model_upperbound": None,
+}
+
+_IC_MODEL_COL_ALIASES = {
+    "ic_model_date": ("ic_model_date", "date", "as_of", "asof"),
+    "ic_model_lowerbound": (
+        "ic_model_lowerbound", "lowerbound", "lower_bound", "lower"),
+    "ic_model_upperbound": (
+        "ic_model_upperbound", "upperbound", "upper_bound", "upper"),
+}
+
+
+def _resolve_ic_model_column(df: pd.DataFrame, field: str) -> str | None:
+    """Return the actual CSV column name for a payload field, if present."""
+    for alias in _IC_MODEL_COL_ALIASES[field]:
+        if alias in df.columns:
+            return alias
+    return None
+
+
+def _parse_ic_model_scalar(value) -> str | int | float | None:
+    """Normalize one CSV cell for JSON payload (None → NA in the dashboard)."""
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    # Prefer integers for bounds when whole numbers.
+    num = pd.to_numeric(value, errors="coerce")
+    if pd.notna(num):
+        rounded = float(num)
+        if rounded == int(rounded):
+            return int(rounded)
+        return rounded
+    return str(value).strip()
+
+
+def load_ic_model_estimates(country: str = "DRC") -> dict:
+    """Load Imperial College bounds from Data/ic_model_estimates.csv.
+
+    Not tied to sit-rep CSVs or GeoJSON. Exposed as PAYLOAD.ic_model with keys
+    ic_model_date, ic_model_lowerbound, ic_model_upperbound (null if missing).
+
+    Expected CSV (column names flexible via aliases):
+        country,ic_model_date,ic_model_lowerbound,ic_model_upperbound
+        DRC,2026-05-26,500,1200
+
+    If ``country`` is omitted, the first data row is used.
+    """
+    out = dict(_IC_MODEL_DEFAULTS)
+    if not IC_MODEL_CSV.exists():
+        print(f"  NOTE: {IC_MODEL_CSV.name} not found; ic_model defaults to NA in UI")
+        return out
+    df = pd.read_csv(IC_MODEL_CSV)
+    if df.empty:
+        print(f"  WARNING: {IC_MODEL_CSV.name} is empty")
+        return out
+    df = df.copy()
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    work = df
+    if "country" in df.columns:
+        mask = df["country"].astype(str).str.strip().str.upper() == country.upper()
+        if mask.any():
+            work = df[mask]
+        else:
+            print(f"  WARNING: no row for country={country!r} in {IC_MODEL_CSV.name}")
+    row = work.iloc[0]
+    for field in _IC_MODEL_DEFAULTS:
+        col = _resolve_ic_model_column(df, field)
+        if col is None:
+            continue
+        parsed = _parse_ic_model_scalar(row[col])
+        if field == "ic_model_date" and parsed is not None:
+            # Pretty-print ISO dates for the tooltip; leave other strings as-is.
+            try:
+                d = datetime.strptime(str(parsed)[:10], "%Y-%m-%d").date()
+                parsed = d.strftime("%d %b %Y").lstrip("0")
+            except ValueError:
+                parsed = str(parsed)
+        out[field] = parsed
+    print(f"  ic_model: date={out['ic_model_date']!r}, "
+          f"bounds={out['ic_model_lowerbound']!r}–{out['ic_model_upperbound']!r}")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1052,6 +1144,7 @@ def build_payload() -> dict:
             }],
         }
     totals = {**case_totals, **sitrep}
+    ic_model = load_ic_model_estimates()
     print(f"  case totals: confirmed={totals.get('confirmed_cases', 0)}, "
           f"suspected={totals.get('suspected_cases', 0)}, "
           f"affected zones={totals.get('affected_zones', 0)}")
@@ -1079,6 +1172,7 @@ def build_payload() -> dict:
         "terms_updated": terms_updated,
         "partners": partners,
         "totals": totals,
+        "ic_model": ic_model,
         "active_case_markers": active_case_markers,
     }
 
@@ -1172,6 +1266,56 @@ HTML_TEMPLATE = r"""<!doctype html>
   #tracker .country .susp-d { color:#caa385; font-weight:600; }
   #tracker .country .dot { color:#444; }
   #tracker .country .sub { font-size:10px; color:#888; }
+  #imperial-model-estimates {
+    margin-top:6px;
+    font-size:11px;
+    color:#bbb;
+    line-height:1.35;
+    text-align:center;
+  }
+  #imperial-model-estimates .note-wrap {
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:6px;
+    flex-wrap:wrap;
+  }
+  #imperial-model-estimates .info-wrap { position:relative; display:inline-flex; align-items:center; }
+  #imperial-model-estimates .info-icon {
+    width:16px; height:16px; border-radius:50%;
+    border:1px solid #666; background:#222; color:#ffd28a;
+    font-size:11px; font-weight:700; line-height:1;
+    display:inline-flex; align-items:center; justify-content:center;
+    padding:0; cursor:help;
+  }
+  #imperial-model-estimates .info-icon:hover,
+  #imperial-model-estimates .info-icon:focus-visible {
+    border-color:#ffae42; color:#ffae42; outline:none;
+  }
+  #imperial-model-estimates .info-tooltip {
+    display:none;
+    position:absolute;
+    left:50%;
+    top:calc(100% + 6px);
+    transform:translateX(-50%);
+    width:max-content;
+    max-width:min(280px, 70vw);
+    background:#1f1f1f;
+    border:1px solid #444;
+    border-radius:6px;
+    padding:8px 10px;
+    box-shadow:0 4px 16px rgba(0,0,0,0.45);
+    color:#ddd;
+    font-size:10px;
+    line-height:1.4;
+    z-index:1200;
+  }
+  #imperial-model-estimates .info-tooltip a {
+    color:#9fcdfb; text-decoration:underline;
+  }
+  #imperial-model-estimates .info-tooltip a:hover { color:#ffae42; }
+  #imperial-model-estimates .info-wrap:hover .info-tooltip,
+  #imperial-model-estimates .info-wrap:focus-within .info-tooltip { display:block; }
   #title h1 { margin:0 0 4px 0; font-size:clamp(16px, 3.4vw, 22px); font-weight:700; letter-spacing:0.3px; }
   #title .sub { font-size:11px; opacity:0.8; }
   select, button { background:#222; color:#eee; border:1px solid #444; padding:4px 6px; border-radius:4px; font-size:12px; }
@@ -1252,6 +1396,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   <div class="sub" id="title-sub"></div>
   <div class="sub" id="title-disclaimer">Case Data From INSP - All Underlying Data Have Been Released Publicly</div>
   <div id="tracker"></div>
+  <div class="sub" id="imperial-model-estimates"></div>
   <div style="margin-top:4px">
     <button id="methods-btn" class="link-btn" type="button">Contributors, Data, and Methods</button>
     <button id="terms-btn"   class="link-btn" type="button">Terms of Use</button>
@@ -1359,6 +1504,35 @@ document.getElementById("title-sub").innerHTML =
       "</div>" +
     "</div>" +
     "<div class='countries-row'>" + (countryHTML || "<span class='sub'>—</span>") + "</div>";
+})();
+
+// --- modeled-estimate note + tooltip ---
+(function buildModeledEstimateNote() {
+  const root = document.getElementById("imperial-model-estimates");
+  if (!root) return;
+  const m = PAYLOAD.ic_model || {};
+  function icDisplay(v) {
+    if (v == null || v === "") return "NA";
+    if (typeof v === "number") return v.toLocaleString();
+    return String(v);
+  }
+  const date = icDisplay(m.ic_model_date);
+  const lo = icDisplay(m.ic_model_lowerbound);
+  const hi = icDisplay(m.ic_model_upperbound);
+  const sentence = "Modelled estimates indicate the outbreak may be larger than what is shown by these totals.";
+  const icReportUrl = "https://www.imperial.ac.uk/media/imperial-college/medicine/mrc-gida/Report-ebola-update-20-05-2026.pdf";
+  const tooltip = "Based on data up to " + date +
+    ", the true outbreak size is estimated between " + lo +
+    " and " + hi + " cases (See <a href='" + icReportUrl +
+    "' target='_blank' rel='noopener'>this report</a> for more details).";
+  root.innerHTML =
+    "<span class='note-wrap'>" +
+      "<span class='note-text'>" + sentence + "</span>" +
+      "<span class='info-wrap'>" +
+        "<button class='info-icon' type='button' aria-label='More information about modeled estimates'>i</button>" +
+        "<span class='info-tooltip' role='tooltip'>" + tooltip + "</span>" +
+      "</span>" +
+    "</span>";
 })();
 
 // --- partners strip ---
