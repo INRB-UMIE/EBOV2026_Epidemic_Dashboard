@@ -129,6 +129,22 @@ PARTNER_ORDER = ["INSP.png", "inrb.png", "INOHA.jpeg", "UMIE.jpeg", "africa-cdc.
 # helpers
 # ---------------------------------------------------------------------------
 
+# _date values arrive from the upstream pipeline in mixed formats
+# (ISO, D/M/Y, and M/D/YY). Try each in order; day/month > 12 disambiguates
+# the two slash formats for the dates we actually see.
+_DATE_FORMATS = ("%Y-%m-%d", "%d/%m/%Y", "%m/%d/%y")
+
+
+def _parse_date(s):
+    """Parse a date string in any of the known upstream formats; None if unparseable."""
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(s, fmt).date()
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
 def detect_asof() -> str:
     """Derive the 'latest case report' date.
     Checks local sit-rep CSVs first, then falls back to _date fields in the
@@ -138,10 +154,9 @@ def detect_asof() -> str:
         for p in SIT_REPS_DIR.iterdir():
             if not p.is_file() or p.suffix.lower() != ".csv":
                 continue
-            try:
-                dated.append((datetime.strptime(p.stem, "%Y-%m-%d").date(), p))
-            except ValueError:
-                continue
+            d = _parse_date(p.stem)
+            if d is not None:
+                dated.append((d, p))
         if dated:
             d, _ = max(dated)
             return d.strftime("%d %b %Y").lstrip("0")
@@ -154,10 +169,9 @@ def detect_asof() -> str:
                         feat["properties"].get("epi", {})):
                 for v in src.values():
                     if isinstance(v, dict) and "_date" in v:
-                        try:
-                            dates.add(datetime.strptime(v["_date"], "%Y-%m-%d").date())
-                        except (ValueError, TypeError):
-                            pass
+                        d = _parse_date(v["_date"])
+                        if d is not None:
+                            dates.add(d)
         if dates:
             return max(dates).strftime("%d %b %Y").lstrip("0")
     return ASOF_FALLBACK
