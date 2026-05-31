@@ -17,6 +17,7 @@ the project root, alongside the ``Scripts/`` folder containing this file::
     │   └── build_dashboard_public.py    (this file)
     ├── Data/
     │   ├── health_zone_metadata.csv         per-zone metrics (one row per zone)
+    │   ├── caveats.csv                      optional tracker footnotes (metric + warning)
     │   ├── DRC Health Zones/<*.shp,*.dbf,*.shx,*.prj,...>
     │   │                                    OMS/DSNIS administrative boundaries
     │   ├── Epidemiological Data/<YYYY-MM-DD>.csv
@@ -78,6 +79,7 @@ EXTERNAL_DATA    = BUILD_DIR.parent / "data"
 
 METADATA_CSV     = DATA_ROOT / "health_zone_metadata.csv"
 IC_MODEL_CSV     = DATA_ROOT / "ic_model_estimates.csv"
+CAVEATS_CSV      = DATA_ROOT / "caveats.csv"
 SIT_REPS_DIR     = DATA_ROOT / "Epidemiological Data"
 METHODS_DOCX     = DATA_ROOT / "Methods" / "Contributors_Methods_Data_website.docx"
 TERMS_TXT        = DATA_ROOT / "ToS" / "Terms of Use.txt"
@@ -329,6 +331,91 @@ def _national_totals_from_build_geojson() -> dict | None:
         "affected_country_count": 1,
         "per_country": per_country,
     }
+
+
+# ---------------------------------------------------------------------------
+# Tracker caveats (optional CSV beside national totals in the title panel)
+# ---------------------------------------------------------------------------
+
+_TRACKER_CAVEAT_METRIC_ALIASES = {
+    "confirmed_cases": (
+        "confirmed_cases", "confirmed cases", "confirmed", "conf", "conf_cases",
+    ),
+    "suspected_cases": (
+        "suspected_cases", "suspected cases", "suspected", "susp", "susp_cases",
+    ),
+    "confirmed_deaths": (
+        "confirmed_deaths", "confirmed deaths", "conf_deaths", "conf deaths",
+    ),
+    "suspected_deaths": (
+        "suspected_deaths", "suspected deaths", "susp_deaths", "susp deaths",
+    ),
+}
+
+_TRACKER_CAVEAT_MARKS = ("*", "†", "‡", "§")
+
+_TRACKER_CAVEAT_WARNING_COLS = (
+    "warning", "warnings", "caveat", "caveats", "message", "text", "note",
+)
+
+
+def _normalize_tracker_caveat_metric(raw: str) -> str | None:
+    key = re.sub(r"[\s\-]+", "_", str(raw).strip().lower())
+    for canonical, aliases in _TRACKER_CAVEAT_METRIC_ALIASES.items():
+        if key in aliases:
+            return canonical
+    return None
+
+
+def load_tracker_caveats() -> list[dict]:
+    """Load tracker footnotes from Data/caveats.csv.
+
+    Each row adds an asterisk (or †, ‡, § for further rows) beside the matching
+    national metric in the per-country tracker line and a footnote below.
+
+    Expected CSV::
+
+        metric,warning
+        suspected_cases,National suspected counts include contacts under surveillance.
+
+    ``metric`` must resolve to one of: confirmed_cases, suspected_cases,
+    confirmed_deaths, suspected_deaths (aliases like ``susp`` are accepted).
+    """
+    if not CAVEATS_CSV.exists():
+        return []
+    df = pd.read_csv(CAVEATS_CSV)
+    if df.empty:
+        print(f"  WARNING: {CAVEATS_CSV.name} is empty")
+        return []
+    df = df.copy()
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    if "metric" not in df.columns:
+        print(f"  WARNING: {CAVEATS_CSV.name} needs a 'metric' column")
+        return []
+    warn_col = next((c for c in _TRACKER_CAVEAT_WARNING_COLS if c in df.columns), None)
+    if warn_col is None:
+        print(f"  WARNING: {CAVEATS_CSV.name} needs a warning column "
+              f"(e.g. warning, message, caveat)")
+        return []
+    out: list[dict] = []
+    seen: set[str] = set()
+    for _, row in df.iterrows():
+        metric = _normalize_tracker_caveat_metric(row["metric"])
+        if metric is None:
+            print(f"  WARNING: unknown tracker caveat metric {row['metric']!r}")
+            continue
+        if metric in seen:
+            print(f"  WARNING: duplicate caveat for {metric}; keeping first row")
+            continue
+        warning = str(row[warn_col]).strip()
+        if not warning or warning.lower() in ("nan", "none"):
+            continue
+        mark = _TRACKER_CAVEAT_MARKS[len(out)] if len(out) < len(_TRACKER_CAVEAT_MARKS) else "*"
+        out.append({"metric": metric, "mark": mark, "warning": warning})
+        seen.add(metric)
+    if out:
+        print(f"  tracker caveats: {[c['metric'] for c in out]}")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -1145,6 +1232,7 @@ def build_payload() -> dict:
         }
     totals = {**case_totals, **sitrep}
     ic_model = load_ic_model_estimates()
+    tracker_caveats = load_tracker_caveats()
     print(f"  case totals: confirmed={totals.get('confirmed_cases', 0)}, "
           f"suspected={totals.get('suspected_cases', 0)}, "
           f"affected zones={totals.get('affected_zones', 0)}")
@@ -1173,6 +1261,7 @@ def build_payload() -> dict:
         "partners": partners,
         "totals": totals,
         "ic_model": ic_model,
+        "tracker_caveats": tracker_caveats,
         "active_case_markers": active_case_markers,
     }
 
@@ -1266,6 +1355,11 @@ HTML_TEMPLATE = r"""<!doctype html>
   #tracker .country .susp-d { color:#caa385; font-weight:600; }
   #tracker .country .dot { color:#444; }
   #tracker .country .sub { font-size:10px; color:#888; }
+  #tracker .caveat-mark { font-size:0.85em; color:#ffae42; font-weight:700; margin-left:1px; vertical-align:super; line-height:0; }
+  #tracker .tracker-footnotes { margin-top:8px; max-width:min(480px, 92vw); font-size:10px; color:#aaa; line-height:1.4; text-align:left; }
+  #tracker .tracker-footnotes p { margin:0 0 4px; }
+  #tracker .tracker-footnotes p:last-child { margin-bottom:0; }
+  #tracker .tracker-footnotes .mark { color:#ffae42; font-weight:700; margin-right:3px; }
   #imperial-model-estimates {
     margin-top:6px;
     font-size:11px;
@@ -1475,19 +1569,43 @@ document.getElementById("title-sub").innerHTML =
 (function buildTracker() {
   const t = PAYLOAD.totals || {};
   const tracker = document.getElementById("tracker");
+  const caveats = PAYLOAD.tracker_caveats || [];
+  const caveatByMetric = {};
+  caveats.forEach(function(c) { caveatByMetric[c.metric] = c.mark; });
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
   function num(v) { return (v == null ? 0 : v).toLocaleString(); }
+  function countWithMark(v, metric) {
+    const base = num(v);
+    const mark = caveatByMetric[metric];
+    return mark
+      ? base + "<span class='caveat-mark' aria-hidden='true'>" + esc(mark) + "</span>"
+      : base;
+  }
   const per = (t.per_country || []);
   const countryHTML = per.map(function(c) {
     return "<div class='country'>" +
-             "<span class='name'>" + c.country + "</span>" +
+             "<span class='name'>" + esc(c.country) + "</span>" +
              "<span class='nums'>" +
-               "<span class='conf'>"   + num(c.confirmed_cases)   + "</span> conf · " +
-               "<span class='susp'>"   + num(c.suspected_cases)   + "</span> susp · " +
-               "<span class='conf-d'>" + num(c.confirmed_deaths)  + "</span> conf deaths · " +
-               "<span class='susp-d'>" + num(c.suspected_deaths)  + "</span> susp deaths" +
+               "<span class='conf'>"   + countWithMark(c.confirmed_cases,  "confirmed_cases")  + "</span> conf · " +
+               "<span class='susp'>"   + countWithMark(c.suspected_cases,  "suspected_cases")  + "</span> susp · " +
+               "<span class='conf-d'>" + countWithMark(c.confirmed_deaths, "confirmed_deaths") + "</span> conf deaths · " +
+               "<span class='susp-d'>" + countWithMark(c.suspected_deaths, "suspected_deaths") + "</span> susp deaths" +
              "</span>" +
            "</div>";
   }).join("");
+  const footnotesHTML = caveats.length
+    ? "<div class='tracker-footnotes'>" +
+        caveats.map(function(c) {
+          return "<p><span class='mark'>" + esc(c.mark) + "</span>" + esc(c.warning) + "</p>";
+        }).join("") +
+      "</div>"
+    : "";
   const globalDeaths = (t.global_confirmed_deaths || 0) + (t.global_suspected_deaths || 0);
   tracker.innerHTML =
     "<div class='stats-block'>" +
@@ -1503,7 +1621,8 @@ document.getElementById("title-sub").innerHTML =
         "</div>" +
       "</div>" +
     "</div>" +
-    "<div class='countries-row'>" + (countryHTML || "<span class='sub'>—</span>") + "</div>";
+    "<div class='countries-row'>" + (countryHTML || "<span class='sub'>—</span>") + "</div>" +
+    footnotesHTML;
 })();
 
 // --- modeled-estimate note + tooltip ---
